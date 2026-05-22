@@ -1,0 +1,10 @@
+node_modules/
+.env
+sessions/
+output/
+npm-debug.log*
+# Ignorar ficheiros de cookies e sessões
+cookies-familysearch.json
+*.json
+!package.json
+!package-lock.json

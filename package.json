@@ -1,0 +1,30 @@
+{
+  "name": "botgenealogia",
+  "version": "1.0.0",
+  "description": "Motor local de deducao temporal, scraping genealogico e analise por IA.",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js",
+    "start:visible": "set HEADLESS=false&& node index.js",
+    "start:headless": "set HEADLESS=true&& node index.js",
+    "doctor": "node -e \"require('./src/logic'); require('./src/ai'); require('./src/scraper'); console.log('OK')\""
+  },
+  "keywords": [
+    "genealogy",
+    "puppeteer",
+    "openai",
+    "gemini"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "dotenv": "^17.4.2",
+    "openai": "^6.39.0",
+    "playwright": "^1.60.0",
+    "puppeteer": "^25.0.4",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
+  }
+}
