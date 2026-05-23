@@ -2,15 +2,29 @@ const OpenAI = require('openai');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const config = require('./config');
 
-const SYSTEM_PROMPT = `Analise este texto extraido de um acervo genealogico.
-Identifique:
-1) Possiveis pais
-2) Filhos
-3) Variacoes do sobrenome
-4) Locais de registro
-5) Datas ou janelas temporais relevantes
-6) Nivel de confianca e justificativa curta
-Formate a resposta exclusivamente como JSON estruturado, sem markdown.`;
+const OPENAI_KEY = "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";
+const GEMINI_KEY = "AIzaSyBhPMjseM7g8ZMzZa5j1l_rPGfVsX6Bchs";
+// const CLAUDE_KEY = "sk-ant-api03-R2D...igAA";
+
+const SYSTEM_PROMPT = `Voce e um detetive genealogico especializado em analisar texto extraido de acervos, registros civis, paroquiais, jornais, inventarios, obituarios e documentos historicos.
+
+Sua tarefa e extrair apenas pistas genealogicas sustentadas pelo texto recebido. Nao invente nomes, datas, locais ou relacoes familiares. Quando houver incerteza, registre apenas a pista plausivel e explique brevemente a cautela no campo reasoning.
+
+Contrato de resposta obrigatorio:
+- Retorne somente um JSON valido.
+- O JSON deve conter exatamente estas chaves:
+  - possibleParents: array de strings
+  - children: array de strings
+  - surnameVariations: array de strings
+  - recordPlaces: array de strings
+  - relevantDates: array de strings
+  - confidence: string
+  - reasoning: string curta
+- Use arrays vazios quando uma categoria nao tiver evidencias.
+- confidence deve ser uma string curta como "low", "medium" ou "high".
+- reasoning deve ser curto, objetivo e baseado nas evidencias do texto.
+
+Regra critica: NAO inclua blocos de codigo markdown (como \`\`\`json) e nao adicione texto fora do JSON.`;
 
 function emptyAnalysis(reason) {
   return {
@@ -24,34 +38,47 @@ function emptyAnalysis(reason) {
   };
 }
 
+function cleanJsonText(text) {
+  return text
+    .trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+}
+
 function extractJson(text) {
   if (!text) return null;
-  const trimmed = text.trim();
+
+  const cleaned = cleanJsonText(text);
+
   try {
-    return JSON.parse(trimmed);
+    return JSON.parse(cleaned);
   } catch (_) {
-    const match = trimmed.match(/\{[\s\S]*\}/);
+    const match = cleaned.match(/\{[\s\S]*\}/);
     if (!match) return null;
+
+    const jsonCandidate = cleanJsonText(match[0]);
+
     try {
-      return JSON.parse(match[0]);
+      return JSON.parse(jsonCandidate);
     } catch (error) {
       return {
         parseError: error.message,
-        raw: trimmed.slice(0, 4000)
+        raw: cleaned.slice(0, 4000)
       };
     }
   }
 }
 
 async function analyzeWithOpenAI(payload) {
-  if (!config.ai.openaiApiKey) {
-    return emptyAnalysis('OPENAI_API_KEY nao configurada.');
+  if (!OPENAI_KEY) {
+    return emptyAnalysis('OPENAI_KEY nao configurada.');
   }
 
-  const client = new OpenAI({ apiKey: config.ai.openaiApiKey });
+  const client = new OpenAI({ apiKey: OPENAI_KEY });
   const response = await client.chat.completions.create({
     model: config.ai.openaiModel,
-    temperature: 0.1,
+    temperature: 0.0,
     response_format: { type: 'json_object' },
     messages: [
       { role: 'system', content: SYSTEM_PROMPT },
@@ -63,15 +90,15 @@ async function analyzeWithOpenAI(payload) {
 }
 
 async function analyzeWithGemini(payload) {
-  if (!config.ai.geminiApiKey) {
-    return emptyAnalysis('GEMINI_API_KEY nao configurada.');
+  if (!GEMINI_KEY) {
+    return emptyAnalysis('GEMINI_KEY nao configurada.');
   }
 
-  const genAI = new GoogleGenerativeAI(config.ai.geminiApiKey);
+  const genAI = new GoogleGenerativeAI(GEMINI_KEY);
   const model = genAI.getGenerativeModel({
     model: config.ai.geminiModel,
     generationConfig: {
-      temperature: 0.1,
+      temperature: 0.0,
       responseMimeType: 'application/json'
     }
   });
