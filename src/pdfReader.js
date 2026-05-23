@@ -1,7 +1,6 @@
 const fs = require('fs/promises');
 const config = require('./config');
-
-const GEMINI_KEY = process.env.GEMINI_API_KEY || config.ai.geminiApiKey;
+const { normalizeSearch } = require('./validators');
 
 const PDF_SYSTEM_PROMPT = `Aja como um investigador genealogico. Analise este documento/grafico em PDF. Identifique as pontas soltas na arvore (pessoas sem pais conhecidos, casais onde falta o conjuge, ou individuos sem datas de nascimento/obito). Retorne ESTRITAMENTE um array JSON contendo objetos com o seguinte formato exato para cada pessoa a investigar: { "site": "familysearch", "givenName": "Nome", "surname": "Sobrenome", "place": "Local provavel", "birthYear": 1900, "birthYearTolerance": 5, "childrenBirthYears": [], "reason": "Motivo da pesquisa" }. Nao devolva Markdown.`;
 
@@ -45,32 +44,15 @@ function extractJsonArray(text) {
   }
 }
 
-function normalizeSearch(search) {
-  return {
-    site: search.site || 'familysearch',
-    givenName: search.givenName || '',
-    surname: search.surname || '',
-    place: search.place || '',
-    birthYear: Number.isFinite(Number(search.birthYear)) ? Number(search.birthYear) : undefined,
-    birthYearTolerance: Number.isFinite(Number(search.birthYearTolerance))
-      ? Number(search.birthYearTolerance)
-      : 5,
-    childrenBirthYears: Array.isArray(search.childrenBirthYears)
-      ? search.childrenBirthYears.filter((year) => Number.isFinite(Number(year))).map(Number)
-      : [],
-    reason: search.reason || 'Pesquisa sugerida a partir de PDF genealogico.'
-  };
-}
-
 async function analyzeTreePdf(filePath) {
-  if (!GEMINI_KEY) {
-    throw new Error('GEMINI_KEY nao configurada.');
+  if (!config.ai.geminiApiKey) {
+    throw new Error('GEMINI_API_KEY nao configurada.');
   }
 
   const pdfBuffer = await fs.readFile(filePath);
   const base64String = pdfBuffer.toString('base64');
   const model = 'gemini-1.5-flash-latest';
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_KEY}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${config.ai.geminiApiKey}`;
 
   const response = await fetch(url, {
     method: 'POST',

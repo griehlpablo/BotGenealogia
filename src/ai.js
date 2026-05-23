@@ -1,42 +1,55 @@
+const OpenAI = require('openai');
 const config = require('./config');
-
-const GEMINI_KEY = "AIzaSyBhPMjseM7g8ZMzZa5j1l_rPGfVsX6Bchs";
-// const CLAUDE_KEY = process.env.CLAUDE_API_KEY;
+const { normalizeAiAnalysis, emptyAiAnalysis } = require('./validators');
 
 const SYSTEM_PROMPT = `Voce e um detetive genealogico especializado em analisar texto extraido de acervos, registros civis, paroquiais, jornais, inventarios, obituarios e documentos historicos.
 
-Sua tarefa e extrair apenas pistas genealogicas sustentadas pelo texto recebido. Nao invente nomes, datas, locais ou relacoes familiares. Quando houver incerteza, registre apenas a pista plausivel e explique brevemente a cautela no campo reasoning.
+Extraia apenas informacoes sustentadas pelo texto recebido. Nao invente nomes, datas, locais, links ou parentescos. Sempre que sugerir relacao familiar, inclua evidenceText com o trecho ou resumo fiel da evidencia. Se o texto bruto for ruim, generico ou sem registros uteis, retorne arrays vazios, confidence "low" e reasoning curto.
 
-Contrato de resposta obrigatorio:
-- Retorne somente um JSON valido.
-- O JSON deve conter exatamente estas chaves:
-  - possibleParents: array de strings
-  - children: array de strings
-  - surnameVariations: array de strings
-  - recordPlaces: array de strings
-  - relevantDates: array de strings
-  - confidence: string
-  - reasoning: string curta
-- Use arrays vazios quando uma categoria nao tiver evidencias.
-- confidence deve ser uma string curta como "low", "medium" ou "high".
-- reasoning deve ser curto, objetivo e baseado nas evidencias do texto.
+Retorne somente JSON valido, sem Markdown, sem blocos de codigo e sem texto fora do JSON.
 
-Regra critica: NAO inclua blocos de codigo markdown (como \`\`\`json) e nao adicione texto fora do JSON.`;
-
-function emptyAnalysis(reason) {
-  return {
-    possibleParents: [],
-    children: [],
-    surnameVariations: [],
-    recordPlaces: [],
-    relevantDates: [],
-    confidence: 'low',
-    reasoning: reason
-  };
+O JSON deve seguir exatamente este formato:
+{
+  "matches": [
+    {
+      "personName": "",
+      "matchedSurnames": [],
+      "birth": {
+        "date": "",
+        "place": ""
+      },
+      "death": {
+        "date": "",
+        "place": ""
+      },
+      "relationships": [
+        {
+          "type": "father|mother|spouse|child|sibling|other",
+          "name": "",
+          "evidenceText": ""
+        }
+      ],
+      "sourceLinks": [],
+      "confidenceScore": 0,
+      "confidenceLabel": "low|medium|high",
+      "reasoning": "",
+      "warnings": []
+    }
+  ],
+  "possibleParents": [],
+  "children": [],
+  "surnameVariations": [],
+  "recordPlaces": [],
+  "relevantDates": [],
+  "nextSearchSuggestions": [],
+  "confidence": "low|medium|high",
+  "reasoning": ""
 }
 
+confidenceScore deve ser um numero de 0 a 100. confidenceLabel deve ser coerente com a pontuacao: 0-39 low, 40-74 medium, 75-100 high.`;
+
 function cleanJsonText(text) {
-  return text
+  return String(text || '')
     .trim()
     .replace(/^```(?:json)?\s*/i, '')
     .replace(/\s*```$/i, '')
@@ -44,9 +57,8 @@ function cleanJsonText(text) {
 }
 
 function extractJson(text) {
-  if (!text) return null;
-
   const cleaned = cleanJsonText(text);
+  if (!cleaned) return null;
 
   try {
     return JSON.parse(cleaned);
@@ -54,10 +66,8 @@ function extractJson(text) {
     const match = cleaned.match(/\{[\s\S]*\}/);
     if (!match) return null;
 
-    const jsonCandidate = cleanJsonText(match[0]);
-
     try {
-      return JSON.parse(jsonCandidate);
+      return JSON.parse(cleanJsonText(match[0]));
     } catch (error) {
       return {
         parseError: error.message,
@@ -68,11 +78,11 @@ function extractJson(text) {
 }
 
 async function analyzeWithOpenAI(payload) {
-  if (!OPENAI_KEY) {
-    return emptyAnalysis('OPENAI_KEY nao configurada.');
+  if (!config.ai.openaiApiKey) {
+    return emptyAiAnalysis('OPENAI_API_KEY nao configurada.');
   }
 
-  const client = new OpenAI({ apiKey: OPENAI_KEY });
+  const client = new OpenAI({ apiKey: config.ai.openaiApiKey });
   const response = await client.chat.completions.create({
     model: config.ai.openaiModel,
     temperature: 0.0,
@@ -83,16 +93,16 @@ async function analyzeWithOpenAI(payload) {
     ]
   });
 
-  return extractJson(response.choices?.[0]?.message?.content);
+  return normalizeAiAnalysis(extractJson(response.choices?.[0]?.message?.content));
 }
 
 async function analyzeWithGemini(payload) {
-  if (!GEMINI_KEY) {
-    return emptyAnalysis('GEMINI_KEY nao configurada.');
+  if (!config.ai.geminiApiKey) {
+    return emptyAiAnalysis('GEMINI_API_KEY nao configurada.');
   }
 
   const model = config.ai.geminiModel || 'gemini-1.5-flash-latest';
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_KEY}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${config.ai.geminiApiKey}`;
 
   const response = await fetch(url, {
     method: 'POST',
@@ -128,7 +138,7 @@ async function analyzeWithGemini(payload) {
   }
 
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-  return extractJson(text);
+  return normalizeAiAnalysis(extractJson(text));
 }
 
 async function analyzeGenealogyText(payload) {
@@ -139,9 +149,9 @@ async function analyzeGenealogyText(payload) {
     if (config.ai.provider === 'gemini') {
       return await analyzeWithGemini(payload);
     }
-    return emptyAnalysis(`AI_PROVIDER invalido: ${config.ai.provider}`);
+    return emptyAiAnalysis(`AI_PROVIDER invalido: ${config.ai.provider}`);
   } catch (error) {
-    return emptyAnalysis(`Falha ao analisar com IA: ${error.message}`);
+    return emptyAiAnalysis(`Falha ao analisar com IA: ${error.message}`);
   }
 }
 

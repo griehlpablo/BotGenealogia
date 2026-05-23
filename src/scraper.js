@@ -1,10 +1,12 @@
 const fs = require('fs');
+const fsp = require('fs/promises');
+const path = require('path');
 const puppeteer = require('puppeteer-extra');
-const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const config = require('./config');
 const { loadCookies, saveCookies } = require('./session');
-
-puppeteer.use(StealthPlugin());
+const { extractFamilySearchResults } = require('./siteExtractors/familysearch');
+const { extractMyHeritageResults } = require('./siteExtractors/myheritage');
+const { extractGenericResults } = require('./siteExtractors/generic');
 
 const SITE_CONFIG = {
   familysearch: {
@@ -48,6 +50,7 @@ function randomInt(min, max) {
 
 async function humanDelay(label = 'pausa') {
   const ms = randomInt(config.browser.minDelayMs, config.browser.maxDelayMs);
+  console.log(`[delay] ${label}: ${ms}ms`);
   await sleep(ms);
 }
 
@@ -75,10 +78,15 @@ async function createBrowser() {
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
-      '--disable-blink-features=AutomationControlled',
       '--window-size=1366,900'
     ]
   });
+}
+
+function siteKeyFor(search) {
+  const site = (search.site || 'familysearch').toLowerCase();
+  if (site === 'web') return 'google';
+  return SITE_CONFIG[site] ? site : 'familysearch';
 }
 
 function buildFamilySearchUrl(search, birthWindow) {
@@ -112,26 +120,20 @@ function buildGoogleUrl(search, birthWindow) {
   const name = [search.givenName, search.surname].filter(Boolean).join(' ').trim();
   if (name) pieces.push(`"${name}"`);
   if (search.place) pieces.push(`"${search.place}"`);
+  pieces.push('(genealogia OR genealogy OR obituario OR "family tree")');
 
-  const extras = '(genealogia OR genealogy OR obituario OR "family tree")';
-  pieces.push(extras);
-
-  if (birthWindow && birthWindow.from && birthWindow.to) {
+  if (birthWindow?.from && birthWindow?.to) {
     pieces.push(`${birthWindow.from}..${birthWindow.to}`);
-  } else if (birthWindow && birthWindow.from) {
-    pieces.push(String(birthWindow.from));
-  } else if (birthWindow && birthWindow.to) {
-    pieces.push(String(birthWindow.to));
   }
 
-  const query = pieces.filter(Boolean).join(' ');
-  const params = new URLSearchParams({ q: query });
+  const params = new URLSearchParams({ q: pieces.filter(Boolean).join(' ') });
   return `${SITE_CONFIG.google.searchUrl}?${params.toString()}`;
 }
 
 function buildSearchUrl(search, birthWindow) {
-  if (search.site === 'myheritage') return buildMyHeritageUrl(search, birthWindow);
-  if (search.site === 'google' || search.site === 'web') return buildGoogleUrl(search, birthWindow);
+  const siteKey = siteKeyFor(search);
+  if (siteKey === 'myheritage') return buildMyHeritageUrl(search, birthWindow);
+  if (siteKey === 'google') return buildGoogleUrl(search, birthWindow);
   return buildFamilySearchUrl(search, birthWindow);
 }
 
@@ -161,15 +163,31 @@ async function typeIfExists(page, selector, value) {
   }
 }
 
-async function authenticate(page, siteKey) {
-  if (siteKey === 'google' || siteKey === 'web') {
-    return;
+async function gotoWithRetry(page, url, options, retries = 1) {
+  let lastError;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      if (attempt > 0) {
+        console.log(`[scraper] Retry de navegacao ${attempt}/${retries}`);
+        await humanDelay('antes do retry');
+      }
+      return await page.goto(url, options);
+    } catch (error) {
+      lastError = error;
+      const retryable = /timeout|navigation|net::/i.test(error.message);
+      if (!retryable || attempt === retries) break;
+    }
   }
+  throw lastError;
+}
+
+async function authenticate(page, siteKey) {
+  if (siteKey === 'google') return;
 
   const site = SITE_CONFIG[siteKey];
   const credentials = config.credentials[siteKey] || {};
 
-  await page.goto(site.cookieDomainUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await gotoWithRetry(page, site.cookieDomainUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }, 1);
   const loaded = await loadCookies(page, config.sessionsDir, siteKey);
   if (loaded > 0) {
     console.log(`[sessao] ${loaded} cookies reaproveitados para ${site.name}.`);
@@ -179,7 +197,7 @@ async function authenticate(page, siteKey) {
   }
 
   console.log(`[sessao] Sem cookies de ${site.name}. Abrindo login inicial.`);
-  await page.goto(site.loginUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await gotoWithRetry(page, site.loginUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }, 1);
   await humanDelay('pagina de login');
 
   const typedEmail = await typeIfExists(page, site.loginSelectors.email, credentials.email);
@@ -189,7 +207,7 @@ async function authenticate(page, siteKey) {
     await humanDelay('antes de enviar login');
     await clickIfExists(page, site.loginSelectors.submit);
   } else {
-    console.log('[sessao] Faca login manualmente na janela aberta; vou aguardar ate 2 minutos.');
+    console.log('[sessao] Login manual disponivel na janela aberta; aguardando ate 2 minutos.');
   }
 
   await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 120000 }).catch(() => null);
@@ -198,54 +216,63 @@ async function authenticate(page, siteKey) {
   console.log(`[sessao] Cookies salvos em ${savedPath}`);
 }
 
+async function detectPageState(page) {
+  const state = await page.evaluate(() => {
+    const text = document.body?.innerText?.replace(/\s+/g, ' ').toLowerCase() || '';
+    const hasPassword = Boolean(document.querySelector('input[type="password"]'));
+    const hasCaptcha = Boolean(document.querySelector('[class*="captcha" i], [id*="captcha" i], iframe[src*="captcha" i]'));
+    const links = document.querySelectorAll('a[href]').length;
+
+    if (hasCaptcha || /captcha|verify you are human|unusual traffic|access denied/.test(text)) return 'blocked_or_captcha';
+    if (hasPassword || /sign in|log in|iniciar sessao|entrar/.test(text)) return 'login_required';
+    if (/session expired|sessao expirada|please sign in again/.test(text)) return 'session_expired';
+    if (/no results|nenhum resultado|sem resultados|0 results/.test(text)) return 'no_results';
+    if (/error|erro|temporarily unavailable/.test(text) && links < 3) return 'generic_error';
+    if (links > 0) return 'results_found';
+    return 'generic_error';
+  }).catch(() => 'generic_error');
+
+  console.log(`[scraper] Estado da pagina: ${state}`);
+  return state;
+}
+
+function safeArtifactName(search, reason) {
+  const id = search.id || [search.givenName, search.surname].filter(Boolean).join('-') || 'search';
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  return `${stamp}-${id}-${reason}`.replace(/[^a-z0-9._-]+/gi, '-').slice(0, 180);
+}
+
+async function saveDebugArtifacts(page, search, reason) {
+  const debugDir = path.join(config.outputDir, 'debug');
+  await fsp.mkdir(debugDir, { recursive: true });
+  const base = path.join(debugDir, safeArtifactName(search, reason));
+  const screenshotPath = `${base}.png`;
+  await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => null);
+
+  let htmlPath = null;
+  if (config.browser.debugSaveHtml) {
+    htmlPath = `${base}.html`;
+    const html = await page.content().catch(() => '');
+    if (html) await fsp.writeFile(htmlPath, html, 'utf8').catch(() => null);
+  }
+
+  console.log(`[debug] Artefatos salvos: ${screenshotPath}${htmlPath ? `, ${htmlPath}` : ''}`);
+  return { screenshotPath, htmlPath };
+}
+
 async function extractResults(page, siteKey, limit) {
   await page.evaluate(() => window.scrollBy(0, Math.floor(window.innerHeight * 0.8))).catch(() => null);
   await humanDelay('rolagem de resultados');
 
-  const data = await page.evaluate((maxItems) => {
-    const anchors = Array.from(document.querySelectorAll('a[href]'));
-    const seen = new Set();
-    const links = [];
-
-    for (const anchor of anchors) {
-      const text = (anchor.innerText || anchor.textContent || '').replace(/\s+/g, ' ').trim();
-      const href = anchor.href;
-      if (!text || !href || seen.has(href)) continue;
-      if (text.length < 3 || text.length > 220) continue;
-      seen.add(href);
-      links.push({ text, href });
-      if (links.length >= maxItems) break;
-    }
-
-    const main =
-      document.querySelector('main') ||
-      document.querySelector('[role="main"]') ||
-      document.querySelector('#content') ||
-      document.body;
-
-    const text = (main.innerText || main.textContent || '')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 14000);
-
-    return {
-      title: document.title,
-      text,
-      links
-    };
-  }, limit);
-
-  return {
-    site: siteKey,
-    title: data.title,
-    rawText: data.text,
-    recordLinks: data.links
-  };
+  if (siteKey === 'familysearch') return extractFamilySearchResults(page, limit);
+  if (siteKey === 'myheritage') return extractMyHeritageResults(page, limit);
+  return extractGenericResults(page, limit);
 }
 
 async function runSearch(browser, search, birthWindow) {
-  const siteKey = search.site || 'familysearch';
+  const siteKey = siteKeyFor(search);
   const page = await browser.newPage();
+  const searchUrl = buildSearchUrl(search, birthWindow);
 
   try {
     await page.setUserAgent(
@@ -255,24 +282,42 @@ async function runSearch(browser, search, birthWindow) {
     await page.setExtraHTTPHeaders({ 'accept-language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7' });
     await authenticate(page, siteKey);
 
-    const url = buildSearchUrl(search, birthWindow);
-    console.log(`[scraper] Buscando ${search.id || search.surname}: ${url}`);
+    console.log(`[scraper] Buscando ${search.id || search.surname || search.givenName}: ${searchUrl}`);
     await humanDelay('antes da busca');
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: 90000 });
+    await gotoWithRetry(page, searchUrl, { waitUntil: 'networkidle2', timeout: 90000 }, 1);
     await humanDelay('pagina de resultados');
+
+    const pageState = await detectPageState(page);
+    if (pageState === 'blocked_or_captcha') {
+      await saveDebugArtifacts(page, search, pageState);
+      return {
+        ok: false,
+        searchUrl,
+        pageState,
+        error: 'Bloqueio ou captcha detectado. Intervencao manual necessaria; o bot nao tenta contornar.',
+        extracted: { site: siteKey, title: '', rawText: '', recordLinks: [] }
+      };
+    }
 
     const extracted = await extractResults(page, siteKey, config.browser.resultLimit);
     await saveCookies(page, config.sessionsDir, siteKey).catch(() => null);
 
     return {
-      ok: true,
-      searchUrl: url,
-      extracted
+      ok: pageState !== 'generic_error',
+      searchUrl,
+      pageState,
+      error: pageState === 'generic_error' ? 'Estado generico de erro detectado na pagina.' : undefined,
+      extracted: {
+        site: siteKey,
+        ...extracted
+      }
     };
   } catch (error) {
+    await saveDebugArtifacts(page, search, 'error').catch(() => null);
     return {
       ok: false,
-      searchUrl: buildSearchUrl(search, birthWindow),
+      searchUrl,
+      pageState: 'generic_error',
       error: error.message,
       extracted: {
         site: siteKey,
@@ -291,5 +336,8 @@ module.exports = {
   createBrowser,
   runSearch,
   buildSearchUrl,
+  detectPageState,
+  saveDebugArtifacts,
+  gotoWithRetry,
   humanDelay
 };

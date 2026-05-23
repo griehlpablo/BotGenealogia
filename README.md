@@ -1,40 +1,101 @@
 # BotGenealogia
 
-Motor local em Node.js para deducao temporal, busca genealogica com Puppeteer Stealth e analise dos textos extraidos por IA.
+Motor local em Node.js CommonJS para deducao temporal genealogica, busca assistida em acervos, analise por IA e geracao de relatorios HTML/JSON.
 
-## Uso rapido
+## Arquitetura
 
-1. Copie `.env.example` para `.env` e preencha `GEMINI_API_KEY` ou `OPENAI_API_KEY`.
-2. Ajuste `data/input.json` com os sobrenomes, nomes, locais e pistas conhecidas.
-3. Execute:
+- `index.js`: orquestrador principal.
+- `src/config.js`: configuracao por variaveis de ambiente.
+- `src/logic.js`: deducao temporal e janelas genealogicas.
+- `src/validators.js`: normalizacao segura de buscas e respostas da IA.
+- `src/scoring.js`: pontuacao objetiva complementar das hipoteses.
+- `src/scraper.js`: Puppeteer, sessoes por cookies, delays, estados de pagina e debug.
+- `src/siteExtractors/`: extratores por site com fallback generico.
+- `src/session.js`: salvar e carregar cookies locais.
+- `src/ai.js`: analise de texto genealogico via Gemini ou OpenAI.
+- `src/pdfReader.js`: leitura de PDFs locais com Gemini para sugerir novas buscas.
+- `src/report.js`: relatorio HTML e JSON completo em `output/`.
+
+## Configuracao
+
+Copie `.env.example` para `.env` e preencha apenas o que for necessario:
 
 ```bash
+AI_PROVIDER=gemini
+GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_MODEL=gemini-1.5-flash
+```
+
+Para OpenAI:
+
+```bash
+AI_PROVIDER=openai
+OPENAI_API_KEY=your_openai_api_key_here
+OPENAI_MODEL=gpt-4.1-mini
+```
+
+Credenciais de FamilySearch/MyHeritage sao opcionais. Se ficarem vazias, o navegador abre para login manual e os cookies sao salvos localmente em `sessions/`.
+
+## Como rodar
+
+```bash
+npm install
+npm run doctor
 npm start
 ```
 
-Na primeira execucao, se nao houver cookies em `sessions/`, o navegador abre a tela de login do site. Voce pode entrar manualmente; depois o bot salva os cookies em JSON para as proximas execucoes.
+`npm run doctor` apenas carrega os modulos principais para detectar erros de importacao/configuracao local.
 
-## Entrada
+## Entrada manual
 
-Cada item em `data/input.json` aceita:
+Edite `data/input.json`:
 
-- `site`: `familysearch` ou `myheritage`
-- `givenName` e `surname`
-- `place`
-- `birthYearRange`: quando voce ja sabe a janela
-- `birthYear` e `birthYearTolerance`: quando sabe um ano aproximado
-- `childrenBirthYears` e `knownSpouseBirthYear`: para deduzir janela de nascimento da mae
+```json
+{
+  "searches": [
+    {
+      "site": "familysearch",
+      "givenName": "Maria",
+      "surname": "Silva",
+      "place": "Sao Paulo, Brasil",
+      "role": "mother",
+      "childrenBirthYears": [1920, 1924]
+    }
+  ]
+}
+```
+
+Campos uteis:
+
+- `site`: `familysearch`, `myheritage`, `google` ou `web`.
+- `givenName`, `surname`, `place`.
+- `birthYear` e `birthYearTolerance`.
+- `birthYearRange`: `{ "from": 1880, "to": 1890 }`.
+- `childrenBirthYears`, `knownSpouseBirthYear`.
+- `role` ou `targetRelation`: `mother`, `father`, `spouse`, `child`, `unknown`.
+
+## PDFs locais
+
+Coloque graficos de arvore genealogica ou documentos digitalizados em:
+
+```text
+data/pdfs/
+```
+
+Arquivos `.pdf` nessa pasta sao enviados ao Gemini como `application/pdf`. A IA sugere novas buscas, que sao normalizadas e adicionadas dinamicamente ao fluxo antes do scraping.
+
+Por privacidade, PDFs em `data/pdfs/*.pdf` ficam ignorados pelo Git.
 
 ## Saida
 
-O programa imprime detalhes no console e gera um HTML em `output/` com:
+O bot gera arquivos em `output/`:
 
-- nome pesquisado
-- janela temporal calculada
-- hipoteses estruturadas da IA
-- links extraidos para verificacao manual
-- texto bruto usado na analise
+- `relatorio-*.html`: relatorio navegavel.
+- `relatorio-*.json`: resultado completo para auditoria ou processamento posterior.
+- `output/debug/`: screenshots em erro. Se `DEBUG_SAVE_HTML=true`, tambem salva HTML bruto para diagnostico.
 
-## Observacoes
+O relatorio inclui resumo, erros, confianca, pontuacao objetiva, avisos, evidencias textuais, links extraidos e texto bruto em `<details>`.
 
-Use contas e sites respeitando termos de uso, limites de acesso e privacidade dos registros. O bot foi configurado para operar devagar, reutilizar sessao e reduzir logins repetidos.
+## Uso responsavel
+
+Use o bot respeitando termos de uso, limites de acesso e privacidade dos sites consultados. O scraper opera com delays randômicos, reaproveita sessao por cookies e nao tenta automatizar captcha ou contornar bloqueios. Se houver login, captcha, bloqueio ou sessao expirada, trate manualmente.

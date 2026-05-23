@@ -25,9 +25,10 @@ module.exports = {
     headless: boolFromEnv('HEADLESS', false),
     slowMo: numberFromEnv('SLOW_MODE_MS', 250),
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-    minDelayMs: numberFromEnv('MIN_DELAY_MS', 1000),
-    maxDelayMs: numberFromEnv('MAX_DELAY_MS', 4000),
-    resultLimit: numberFromEnv('RESULT_LIMIT', 5)
+    minDelayMs: numberFromEnv('MIN_DELAY_MS', 3000),
+    maxDelayMs: numberFromEnv('MAX_DELAY_MS', 8000),
+    resultLimit: numberFromEnv('RESULT_LIMIT', 5),
+    debugSaveHtml: boolFromEnv('DEBUG_SAVE_HTML', false)
   },
   ai: {
     provider: (process.env.AI_PROVIDER || 'gemini').toLowerCase(),
