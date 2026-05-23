@@ -1,7 +1,9 @@
 const fs = require('fs/promises');
+const path = require('path');
 const config = require('./src/config');
 const { deduceBirthWindow, formatYearRange } = require('./src/logic');
 const { analyzeGenealogyText } = require('./src/ai');
+const { analyzeTreePdf } = require('./src/pdfReader');
 const { createBrowser, runSearch } = require('./src/scraper');
 const { writeHtmlReport } = require('./src/report');
 
@@ -14,13 +16,46 @@ async function readInput() {
   return parsed.searches;
 }
 
+async function readPdfSearches() {
+  const pdfDir = path.join(config.rootDir, 'data', 'pdfs');
+  let entries;
+
+  try {
+    entries = await fs.readdir(pdfDir, { withFileTypes: true });
+  } catch (error) {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  }
+
+  const pdfFiles = entries
+    .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith('.pdf'))
+    .map((entry) => path.join(pdfDir, entry.name));
+
+  const searches = [];
+
+  for (const filePath of pdfFiles) {
+    try {
+      console.log(`\n[pdf] analisando ${filePath}`);
+      const pdfSearches = await analyzeTreePdf(filePath);
+      searches.push(...pdfSearches);
+      console.log(`[pdf] ${pdfSearches.length} pesquisas sugeridas`);
+    } catch (error) {
+      console.error(`[pdf] falha ao analisar ${filePath}: ${error.message}`);
+    }
+  }
+
+  return searches;
+}
+
 function summarizeSearch(search, birthWindow) {
   const name = [search.givenName, search.surname].filter(Boolean).join(' ') || search.surname || search.id;
   return `${name} (${search.site || 'familysearch'}) janela=${formatYearRange(birthWindow) || 'sem janela'}`;
 }
 
 async function main() {
-  const searches = await readInput();
+  const inputSearches = await readInput();
+  const pdfSearches = await readPdfSearches();
+  const searches = [...inputSearches, ...pdfSearches];
   const browser = await createBrowser();
   const results = [];
 

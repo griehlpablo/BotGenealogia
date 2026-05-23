@@ -1,9 +1,7 @@
 const OpenAI = require('openai');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
 const config = require('./config');
 
-const OPENAI_KEY = process.env.OPENAI_API_KEY || config.ai.openaiApiKey;
-const GEMINI_KEY = process.env.GEMINI_API_KEY || config.ai.geminiApiKey;
+const GEMINI_KEY = "AIzaSyBhPMjseM7g8ZMzZa5j1l_rPGfVsX6Bchs";
 // const CLAUDE_KEY = process.env.CLAUDE_API_KEY;
 
 const SYSTEM_PROMPT = `Voce e um detetive genealogico especializado em analisar texto extraido de acervos, registros civis, paroquiais, jornais, inventarios, obituarios e documentos historicos.
@@ -94,21 +92,44 @@ async function analyzeWithGemini(payload) {
     return emptyAnalysis('GEMINI_KEY nao configurada.');
   }
 
-  const genAI = new GoogleGenerativeAI(GEMINI_KEY);
-  const model = genAI.getGenerativeModel({
-    model: config.ai.geminiModel,
-    generationConfig: {
-      temperature: 0.0,
-      responseMimeType: 'application/json'
-    }
+  const model = config.ai.geminiModel || 'gemini-1.5-flash-latest';
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_KEY}`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      systemInstruction: {
+        parts: [
+          { text: SYSTEM_PROMPT }
+        ]
+      },
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            { text: JSON.stringify(payload, null, 2) }
+          ]
+        }
+      ],
+      generationConfig: {
+        temperature: 0.0,
+        responseMimeType: 'application/json'
+      }
+    })
   });
 
-  const result = await model.generateContent([
-    SYSTEM_PROMPT,
-    JSON.stringify(payload, null, 2)
-  ]);
+  const data = await response.json();
 
-  return extractJson(result.response.text());
+  if (!response.ok) {
+    const message = data.error?.message || response.statusText || 'Erro desconhecido na API Gemini.';
+    throw new Error(`Gemini API ${response.status}: ${message}`);
+  }
+
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  return extractJson(text);
 }
 
 async function analyzeGenealogyText(payload) {
