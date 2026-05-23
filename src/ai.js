@@ -1,6 +1,5 @@
-const OpenAI = require('openai');
-const config = require('./config');
 const { normalizeAiAnalysis, emptyAiAnalysis } = require('./validators');
+const GEMINI_KEY = "AIzaSyBhPMjseM7g8ZMzZa5j1l_rPGfVsX6Bchs";
 
 const SYSTEM_PROMPT = `Voce e um detetive genealogico especializado em analisar texto extraido de acervos, registros civis, paroquiais, jornais, inventarios, obituarios e documentos historicos.
 
@@ -77,32 +76,9 @@ function extractJson(text) {
   }
 }
 
-async function analyzeWithOpenAI(payload) {
-  if (!config.ai.openaiApiKey) {
-    return emptyAiAnalysis('OPENAI_API_KEY nao configurada.');
-  }
-
-  const client = new OpenAI({ apiKey: config.ai.openaiApiKey });
-  const response = await client.chat.completions.create({
-    model: config.ai.openaiModel,
-    temperature: 0.0,
-    response_format: { type: 'json_object' },
-    messages: [
-      { role: 'system', content: SYSTEM_PROMPT },
-      { role: 'user', content: JSON.stringify(payload, null, 2) }
-    ]
-  });
-
-  return normalizeAiAnalysis(extractJson(response.choices?.[0]?.message?.content));
-}
-
 async function analyzeWithGemini(payload) {
-  if (!config.ai.geminiApiKey) {
-    return emptyAiAnalysis('GEMINI_API_KEY nao configurada.');
-  }
-
-  const model = config.ai.geminiModel || 'gemini-1.5-flash-latest';
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${config.ai.geminiApiKey}`;
+  const model = 'gemini-1.5-pro';
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_KEY}`;
 
   const response = await fetch(url, {
     method: 'POST',
@@ -143,13 +119,7 @@ async function analyzeWithGemini(payload) {
 
 async function analyzeGenealogyText(payload) {
   try {
-    if (config.ai.provider === 'openai') {
-      return await analyzeWithOpenAI(payload);
-    }
-    if (config.ai.provider === 'gemini') {
-      return await analyzeWithGemini(payload);
-    }
-    return emptyAiAnalysis(`AI_PROVIDER invalido: ${config.ai.provider}`);
+    return await analyzeWithGemini(payload);
   } catch (error) {
     return emptyAiAnalysis(`Falha ao analisar com IA: ${error.message}`);
   }

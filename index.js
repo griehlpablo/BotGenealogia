@@ -10,12 +10,22 @@ const { normalizeSearch } = require('./src/validators');
 const { scoreAnalysis } = require('./src/scoring');
 
 async function readInput() {
-  const raw = await fs.readFile(config.inputPath, 'utf8');
-  const parsed = JSON.parse(raw);
-  if (!Array.isArray(parsed.searches)) {
-    throw new Error(`Arquivo de entrada invalido: ${config.inputPath}`);
+  try {
+    const raw = await fs.readFile(config.inputPath, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed.searches)) {
+      console.warn(`[input] input.json invalido ou vazio. Ignorando arquivo de entrada.`);
+      return [];
+    }
+    return parsed.searches.map(normalizeSearch);
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      console.warn(`[input] input.json nao encontrado. Ignorando arquivo de entrada.`);
+      return [];
+    }
+    console.warn(`[input] Falha ao ler input.json. Ignorando arquivo de entrada: ${error.message}`);
+    return [];
   }
-  return parsed.searches.map(normalizeSearch);
 }
 
 async function readPdfSearches() {

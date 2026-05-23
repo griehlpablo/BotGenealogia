@@ -1,6 +1,6 @@
 const fs = require('fs/promises');
-const config = require('./config');
 const { normalizeSearch } = require('./validators');
+const GEMINI_KEY = "AIzaSyBhPMjseM7g8ZMzZa5j1l_rPGfVsX6Bchs";
 
 const PDF_SYSTEM_PROMPT = `Aja como um investigador genealogico. Analise este documento/grafico em PDF. Identifique as pontas soltas na arvore (pessoas sem pais conhecidos, casais onde falta o conjuge, ou individuos sem datas de nascimento/obito). Retorne ESTRITAMENTE um array JSON contendo objetos com o seguinte formato exato para cada pessoa a investigar: { "site": "familysearch", "givenName": "Nome", "surname": "Sobrenome", "place": "Local provavel", "birthYear": 1900, "birthYearTolerance": 5, "childrenBirthYears": [], "reason": "Motivo da pesquisa" }. Nao devolva Markdown.`;
 
@@ -45,14 +45,14 @@ function extractJsonArray(text) {
 }
 
 async function analyzeTreePdf(filePath) {
-  if (!config.ai.geminiApiKey) {
-    throw new Error('GEMINI_API_KEY nao configurada.');
+  if (!GEMINI_KEY) {
+    throw new Error('GEMINI_KEY nao configurada.');
   }
 
   const pdfBuffer = await fs.readFile(filePath);
   const base64String = pdfBuffer.toString('base64');
-  const model = 'gemini-1.5-flash-latest';
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${config.ai.geminiApiKey}`;
+  const model = 'gemini-1.5-pro';
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_KEY}`;
 
   const response = await fetch(url, {
     method: 'POST',
