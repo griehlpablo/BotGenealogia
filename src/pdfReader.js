@@ -1,11 +1,12 @@
 const fs = require('fs/promises');
+const config = require('./config');
+const { callGeminiGenerateContent } = require('./geminiClient');
 const { normalizeSearch } = require('./validators');
-const GEMINI_KEY = "AIzaSyBhPMjseM7g8ZMzZa5j1l_rPGfVsX6Bchs";
 
 const PDF_SYSTEM_PROMPT = `Aja como um investigador genealogico. Analise este documento/grafico em PDF. Identifique as pontas soltas na arvore (pessoas sem pais conhecidos, casais onde falta o conjuge, ou individuos sem datas de nascimento/obito). Retorne ESTRITAMENTE um array JSON contendo objetos com o seguinte formato exato para cada pessoa a investigar: { "site": "familysearch", "givenName": "Nome", "surname": "Sobrenome", "place": "Local provavel", "birthYear": 1900, "birthYearTolerance": 5, "childrenBirthYears": [], "reason": "Motivo da pesquisa" }. Nao devolva Markdown.`;
 
 function cleanJsonText(text) {
-  return text
+  return String(text || '')
     .trim()
     .replace(/^```(?:json)?\s*/i, '')
     .replace(/\s*```$/i, '')
@@ -13,9 +14,8 @@ function cleanJsonText(text) {
 }
 
 function extractJsonArray(text) {
-  if (!text) return [];
-
   const cleaned = cleanJsonText(text);
+  if (!cleaned) return [];
 
   try {
     const parsed = JSON.parse(cleaned);
@@ -45,52 +45,35 @@ function extractJsonArray(text) {
 }
 
 async function analyzeTreePdf(filePath) {
-  if (!GEMINI_KEY) {
-    throw new Error('GEMINI_KEY nao configurada.');
-  }
-
   const pdfBuffer = await fs.readFile(filePath);
   const base64String = pdfBuffer.toString('base64');
-  const model = 'gemini-1.5-pro';
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_KEY}`;
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
+  const { data } = await callGeminiGenerateContent({
+    taskLabel: 'analise-pdf',
+    preferredModel: config.ai.geminiPdfModel || config.ai.geminiModel || 'gemini-1.5-flash-latest',
+    systemInstruction: {
+      parts: [
+        { text: PDF_SYSTEM_PROMPT }
+      ]
     },
-    body: JSON.stringify({
-      systemInstruction: {
+    contents: [
+      {
+        role: 'user',
         parts: [
-          { text: PDF_SYSTEM_PROMPT }
-        ]
-      },
-      contents: [
-        {
-          role: 'user',
-          parts: [
-            {
-              inlineData: {
-                mimeType: 'application/pdf',
-                data: base64String
-              }
+          {
+            inlineData: {
+              mimeType: 'application/pdf',
+              data: base64String
             }
-          ]
-        }
-      ],
-      generationConfig: {
-        temperature: 0.0,
-        responseMimeType: 'application/json'
+          }
+        ]
       }
-    })
+    ],
+    generationConfig: {
+      temperature: 0.0,
+      responseMimeType: 'application/json'
+    }
   });
-
-  const data = await response.json();
-
-  if (!response.ok) {
-    const message = data.error?.message || response.statusText || 'Erro desconhecido na API Gemini.';
-    throw new Error(`Gemini PDF API ${response.status}: ${message}`);
-  }
 
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
   return extractJsonArray(text).map(normalizeSearch);

@@ -12,18 +12,23 @@ const { scoreAnalysis } = require('./src/scoring');
 async function readInput() {
   try {
     const raw = await fs.readFile(config.inputPath, 'utf8');
+    if (!raw.trim()) {
+      console.warn(`[input] input.json vazio. Continuando com searches: [].`);
+      return [];
+    }
+
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed.searches)) {
-      console.warn(`[input] input.json invalido ou vazio. Ignorando arquivo de entrada.`);
+      console.warn(`[input] input.json invalido: campo searches ausente ou nao e array. Continuando com searches: [].`);
       return [];
     }
     return parsed.searches.map(normalizeSearch);
   } catch (error) {
     if (error.code === 'ENOENT') {
-      console.warn(`[input] input.json nao encontrado. Ignorando arquivo de entrada.`);
+      console.warn(`[input] input.json nao encontrado. Continuando com searches: [].`);
       return [];
     }
-    console.warn(`[input] Falha ao ler input.json. Ignorando arquivo de entrada: ${error.message}`);
+    console.warn(`[input] Falha ao ler input.json. Continuando com searches: []: ${error.message}`);
     return [];
   }
 }
@@ -68,6 +73,14 @@ async function main() {
   const inputSearches = await readInput();
   const pdfSearches = await readPdfSearches();
   const searches = [...inputSearches, ...pdfSearches];
+  if (searches.length === 0) {
+    console.warn('[input] Nenhuma busca manual ou de PDF encontrada. Gerando relatorio vazio.');
+    const report = await writeHtmlReport([]);
+    console.log(`\n[relatorio] HTML: ${report.htmlPath}`);
+    console.log(`[relatorio] JSON: ${report.jsonPath}`);
+    return;
+  }
+
   const browser = await createBrowser();
   const results = [];
 

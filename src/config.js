@@ -16,6 +16,13 @@ function boolFromEnv(name, fallback) {
   return ['1', 'true', 'yes', 'sim'].includes(value.toLowerCase());
 }
 
+function listFromEnv(name) {
+  return (process.env[name] || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 module.exports = {
   rootDir,
   inputPath: process.env.INPUT_PATH || path.join(rootDir, 'data', 'input.json'),
@@ -35,7 +42,9 @@ module.exports = {
     openaiApiKey: process.env.OPENAI_API_KEY,
     openaiModel: process.env.OPENAI_MODEL || 'gpt-4.1-mini',
     geminiApiKey: process.env.GEMINI_API_KEY,
-    geminiModel: process.env.GEMINI_MODEL || 'gemini-1.5-flash'
+    geminiModel: process.env.GEMINI_MODEL || 'gemini-1.5-flash-latest',
+    geminiPdfModel: process.env.GEMINI_PDF_MODEL,
+    geminiFallbackModels: listFromEnv('GEMINI_FALLBACK_MODELS')
   },
   credentials: {
     familysearch: {

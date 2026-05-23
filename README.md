@@ -22,8 +22,10 @@ Copie `.env.example` para `.env` e preencha apenas o que for necessario:
 
 ```bash
 AI_PROVIDER=gemini
-GEMINI_API_KEY=your_gemini_api_key_here
-GEMINI_MODEL=gemini-1.5-flash
+GEMINI_API_KEY=
+GEMINI_MODEL=gemini-1.5-flash-latest
+GEMINI_PDF_MODEL=gemini-1.5-flash-latest
+GEMINI_FALLBACK_MODELS=gemini-1.5-flash-latest,gemini-1.5-flash,gemini-pro
 ```
 
 Para OpenAI:
@@ -64,6 +66,16 @@ Edite `data/input.json`:
   ]
 }
 ```
+
+Mesmo sem buscas manuais, `data/input.json` precisa conter JSON valido. O minimo e:
+
+```json
+{
+  "searches": []
+}
+```
+
+Se o arquivo estiver ausente, vazio ou invalido, o programa imprime um aviso claro e continua com `searches: []`. Use `data/input.example.json` como referencia.
 
 Campos uteis:
 

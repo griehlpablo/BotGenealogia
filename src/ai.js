@@ -1,5 +1,7 @@
+const OpenAI = require('openai');
+const config = require('./config');
+const { callGeminiGenerateContent } = require('./geminiClient');
 const { normalizeAiAnalysis, emptyAiAnalysis } = require('./validators');
-const GEMINI_KEY = "AIzaSyBhPMjseM7g8ZMzZa5j1l_rPGfVsX6Bchs";
 
 const SYSTEM_PROMPT = `Voce e um detetive genealogico especializado em analisar texto extraido de acervos, registros civis, paroquiais, jornais, inventarios, obituarios e documentos historicos.
 
@@ -76,42 +78,47 @@ function extractJson(text) {
   }
 }
 
-async function analyzeWithGemini(payload) {
-  const model = 'gemini-1.5-pro';
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_KEY}`;
+async function analyzeWithOpenAI(payload) {
+  if (!config.ai.openaiApiKey) {
+    return emptyAiAnalysis('OPENAI_API_KEY nao configurada.');
+  }
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      systemInstruction: {
-        parts: [
-          { text: SYSTEM_PROMPT }
-        ]
-      },
-      contents: [
-        {
-          role: 'user',
-          parts: [
-            { text: JSON.stringify(payload, null, 2) }
-          ]
-        }
-      ],
-      generationConfig: {
-        temperature: 0.0,
-        responseMimeType: 'application/json'
-      }
-    })
+  const client = new OpenAI({ apiKey: config.ai.openaiApiKey });
+  const response = await client.chat.completions.create({
+    model: config.ai.openaiModel,
+    temperature: 0.0,
+    response_format: { type: 'json_object' },
+    messages: [
+      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'user', content: JSON.stringify(payload, null, 2) }
+    ]
   });
 
-  const data = await response.json();
+  return normalizeAiAnalysis(extractJson(response.choices?.[0]?.message?.content));
+}
 
-  if (!response.ok) {
-    const message = data.error?.message || response.statusText || 'Erro desconhecido na API Gemini.';
-    throw new Error(`Gemini API ${response.status}: ${message}`);
-  }
+async function analyzeWithGemini(payload) {
+  const { data } = await callGeminiGenerateContent({
+    taskLabel: 'analise-textual',
+    preferredModel: config.ai.geminiModel || 'gemini-1.5-flash-latest',
+    systemInstruction: {
+      parts: [
+        { text: SYSTEM_PROMPT }
+      ]
+    },
+    contents: [
+      {
+        role: 'user',
+        parts: [
+          { text: JSON.stringify(payload, null, 2) }
+        ]
+      }
+    ],
+    generationConfig: {
+      temperature: 0.0,
+      responseMimeType: 'application/json'
+    }
+  });
 
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
   return normalizeAiAnalysis(extractJson(text));
@@ -119,7 +126,13 @@ async function analyzeWithGemini(payload) {
 
 async function analyzeGenealogyText(payload) {
   try {
-    return await analyzeWithGemini(payload);
+    if (config.ai.provider === 'openai') {
+      return await analyzeWithOpenAI(payload);
+    }
+    if (config.ai.provider === 'gemini') {
+      return await analyzeWithGemini(payload);
+    }
+    return emptyAiAnalysis(`AI_PROVIDER invalido: ${config.ai.provider}`);
   } catch (error) {
     return emptyAiAnalysis(`Falha ao analisar com IA: ${error.message}`);
   }
