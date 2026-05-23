@@ -2,9 +2,9 @@ const OpenAI = require('openai');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const config = require('./config');
 
-const OPENAI_KEY = "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";
-const GEMINI_KEY = "AIzaSyBhPMjseM7g8ZMzZa5j1l_rPGfVsX6Bchs";
-// const CLAUDE_KEY = "sk-ant-api03-R2D...igAA";
+const OPENAI_KEY = process.env.OPENAI_API_KEY || config.ai.openaiApiKey;
+const GEMINI_KEY = process.env.GEMINI_API_KEY || config.ai.geminiApiKey;
+// const CLAUDE_KEY = process.env.CLAUDE_API_KEY;
 
 const SYSTEM_PROMPT = `Voce e um detetive genealogico especializado em analisar texto extraido de acervos, registros civis, paroquiais, jornais, inventarios, obituarios e documentos historicos.
 
