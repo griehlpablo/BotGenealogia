@@ -1,4 +1,3 @@
-const OpenAI = require('openai');
 const config = require('./config');
 
 const GEMINI_KEY = "AIzaSyBhPMjseM7g8ZMzZa5j1l_rPGfVsX6Bchs";

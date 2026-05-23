@@ -30,6 +30,11 @@ const SITE_CONFIG = {
       password: 'input[name="password"], input[type="password"]',
       submit: 'button[type="submit"], input[type="submit"]'
     }
+  },
+  google: {
+    name: 'Google',
+    baseUrl: 'https://www.google.com',
+    searchUrl: 'https://www.google.com/search'
   }
 };
 
@@ -43,7 +48,6 @@ function randomInt(min, max) {
 
 async function humanDelay(label = 'pausa') {
   const ms = randomInt(config.browser.minDelayMs, config.browser.maxDelayMs);
-  console.log(`[scraper] ${label}: aguardando ${Math.round(ms / 1000)}s`);
   await sleep(ms);
 }
 
@@ -103,8 +107,31 @@ function buildMyHeritageUrl(search, birthWindow) {
   return `${SITE_CONFIG.myheritage.searchUrl}?${params.toString()}`;
 }
 
+function buildGoogleUrl(search, birthWindow) {
+  const pieces = [];
+  const name = [search.givenName, search.surname].filter(Boolean).join(' ').trim();
+  if (name) pieces.push(`"${name}"`);
+  if (search.place) pieces.push(`"${search.place}"`);
+
+  const extras = '(genealogia OR genealogy OR obituario OR "family tree")';
+  pieces.push(extras);
+
+  if (birthWindow && birthWindow.from && birthWindow.to) {
+    pieces.push(`${birthWindow.from}..${birthWindow.to}`);
+  } else if (birthWindow && birthWindow.from) {
+    pieces.push(String(birthWindow.from));
+  } else if (birthWindow && birthWindow.to) {
+    pieces.push(String(birthWindow.to));
+  }
+
+  const query = pieces.filter(Boolean).join(' ');
+  const params = new URLSearchParams({ q: query });
+  return `${SITE_CONFIG.google.searchUrl}?${params.toString()}`;
+}
+
 function buildSearchUrl(search, birthWindow) {
   if (search.site === 'myheritage') return buildMyHeritageUrl(search, birthWindow);
+  if (search.site === 'google' || search.site === 'web') return buildGoogleUrl(search, birthWindow);
   return buildFamilySearchUrl(search, birthWindow);
 }
 
@@ -135,6 +162,10 @@ async function typeIfExists(page, selector, value) {
 }
 
 async function authenticate(page, siteKey) {
+  if (siteKey === 'google' || siteKey === 'web') {
+    return;
+  }
+
   const site = SITE_CONFIG[siteKey];
   const credentials = config.credentials[siteKey] || {};
 

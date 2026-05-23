@@ -25,8 +25,8 @@ module.exports = {
     headless: boolFromEnv('HEADLESS', false),
     slowMo: numberFromEnv('SLOW_MODE_MS', 250),
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-    minDelayMs: numberFromEnv('MIN_DELAY_MS', 3000),
-    maxDelayMs: numberFromEnv('MAX_DELAY_MS', 8000),
+    minDelayMs: numberFromEnv('MIN_DELAY_MS', 1000),
+    maxDelayMs: numberFromEnv('MAX_DELAY_MS', 4000),
     resultLimit: numberFromEnv('RESULT_LIMIT', 5)
   },
   ai: {
