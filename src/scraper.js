@@ -69,18 +69,22 @@ function resolveExecutablePath() {
 
 async function createBrowser() {
   const executablePath = resolveExecutablePath();
-  return puppeteer.launch({
+  const launchOptions = {
     headless: config.browser.headless,
     slowMo: config.browser.slowMo,
     executablePath,
     defaultViewport: { width: 1366, height: 900 },
     args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--window-size=1366,900'
+      '--window-size=1366,900',
+      ...config.browser.extraArgs
     ]
-  });
+  };
+
+  if (config.browser.userDataDir) {
+    launchOptions.userDataDir = config.browser.userDataDir;
+  }
+
+  return puppeteer.launch(launchOptions);
 }
 
 function siteKeyFor(search) {
@@ -216,17 +220,85 @@ async function authenticate(page, siteKey) {
   console.log(`[sessao] Cookies salvos em ${savedPath}`);
 }
 
+function familySearchBlockedMessage() {
+  return 'FamilySearch retornou Error 15/bloqueio. Abra o Chrome normal, faça login manual, limpe cookies do bot se necessário e rode novamente em modo visível.';
+}
+
+function makePageStateError(message, pageState) {
+  const error = new Error(message);
+  error.pageState = pageState;
+  return error;
+}
+
+async function authenticateFamilySearch(page, search) {
+  const site = SITE_CONFIG.familysearch;
+
+  await gotoWithRetry(page, site.cookieDomainUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }, 1);
+  const loaded = await loadCookies(page, config.sessionsDir, 'familysearch');
+
+  if (loaded > 0) {
+    console.log(`[sessao] ${loaded} cookies reaproveitados para ${site.name}.`);
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => null);
+    await humanDelay('validando sessao');
+
+    const pageState = await detectPageState(page);
+    if (pageState === 'blocked_or_captcha') {
+      await saveDebugArtifacts(page, search, pageState);
+      throw makePageStateError(familySearchBlockedMessage(), pageState);
+    }
+
+    if (pageState !== 'login_required' && pageState !== 'session_expired') {
+      return;
+    }
+
+    console.log('[sessao] Cookies do FamilySearch nao parecem validos. Abrindo login manual.');
+  }
+
+  console.log('[sessao] Faça login manualmente no FamilySearch na janela aberta.');
+  console.log('[sessao] Depois que o login carregar, aguarde. O bot salvará os cookies automaticamente.');
+
+  await gotoWithRetry(page, site.loginUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }, 1);
+  await page.waitForFunction(() => {
+    const text = document.body?.innerText?.replace(/\s+/g, ' ').toLowerCase() || '';
+    const hasPassword = Boolean(document.querySelector('input[type="password"]'));
+    const hasCaptcha = Boolean(document.querySelector('[class*=\"captcha\" i], [id*=\"captcha\" i], iframe[src*=\"captcha\" i]'));
+    const blocked = hasCaptcha || /access denied|error 15|blocked by our security service|captcha|verify you are human|unusual traffic/.test(text);
+    const loginPage = hasPassword || window.location.href.toLowerCase().includes('/auth/familysearch/login') || /sign in|log in|entrar/.test(text);
+    return blocked || !loginPage;
+  }, { timeout: 180000 }).catch(() => null);
+
+  await humanDelay('apos login manual');
+  const savedPath = await saveCookies(page, config.sessionsDir, 'familysearch');
+  console.log(`[sessao] Cookies salvos em ${savedPath}`);
+
+  const pageState = await detectPageState(page);
+  if (pageState === 'blocked_or_captcha') {
+    await saveDebugArtifacts(page, search, pageState);
+    throw makePageStateError(familySearchBlockedMessage(), pageState);
+  }
+
+  if (pageState === 'login_required' || pageState === 'session_expired') {
+    await saveDebugArtifacts(page, search, pageState);
+    throw makePageStateError('Login manual do FamilySearch nao foi concluido dentro de 3 minutos.', pageState);
+  }
+}
+
 async function detectPageState(page) {
   const state = await page.evaluate(() => {
+    const url = window.location.href.toLowerCase();
     const text = document.body?.innerText?.replace(/\s+/g, ' ').toLowerCase() || '';
     const hasPassword = Boolean(document.querySelector('input[type="password"]'));
     const hasCaptcha = Boolean(document.querySelector('[class*="captcha" i], [id*="captcha" i], iframe[src*="captcha" i]'));
     const links = document.querySelectorAll('a[href]').length;
 
-    if (hasCaptcha || /captcha|verify you are human|unusual traffic|access denied/.test(text)) return 'blocked_or_captcha';
-    if (hasPassword || /sign in|log in|iniciar sessao|entrar/.test(text)) return 'login_required';
+    if (hasCaptcha || /access denied|error 15|blocked by our security service|captcha|verify you are human|unusual traffic/.test(text)) {
+      return 'blocked_or_captcha';
+    }
+
+    if (hasPassword || url.includes('/auth/familysearch/login') || /sign in|log in|iniciar sessao|entrar/.test(text)) return 'login_required';
     if (/session expired|sessao expirada|please sign in again/.test(text)) return 'session_expired';
     if (/no results|nenhum resultado|sem resultados|0 results/.test(text)) return 'no_results';
+    if (url.includes('/search/record/results')) return 'results_found';
     if (/error|erro|temporarily unavailable/.test(text) && links < 3) return 'generic_error';
     if (links > 0) return 'results_found';
     return 'generic_error';
@@ -271,16 +343,36 @@ async function extractResults(page, siteKey, limit) {
 
 async function runSearch(browser, search, birthWindow) {
   const siteKey = siteKeyFor(search);
-  const page = await browser.newPage();
   const searchUrl = buildSearchUrl(search, birthWindow);
 
+  if (siteKey === 'familysearch' && config.familySearchMode === 'manual') {
+    return {
+      ok: false,
+      manualRequired: true,
+      pageState: 'manual_required',
+      searchUrl,
+      error: 'FamilySearch está em modo manual. Abra esta URL no Chrome normal, copie o texto ou salve o HTML em data/manual e rode a análise manual.',
+      extracted: {
+        site: 'familysearch',
+        title: 'Busca manual FamilySearch',
+        rawText: '',
+        recordLinks: []
+      }
+    };
+  }
+
+  const page = await browser.newPage();
+
   try {
-    await page.setUserAgent(
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-        '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
-    );
+    if (config.browser.customUserAgent) {
+      await page.setUserAgent(config.browser.customUserAgent);
+    }
     await page.setExtraHTTPHeaders({ 'accept-language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7' });
-    await authenticate(page, siteKey);
+    if (siteKey === 'familysearch') {
+      await authenticateFamilySearch(page, search);
+    } else {
+      await authenticate(page, siteKey);
+    }
 
     console.log(`[scraper] Buscando ${search.id || search.surname || search.givenName}: ${searchUrl}`);
     await humanDelay('antes da busca');
@@ -294,7 +386,9 @@ async function runSearch(browser, search, birthWindow) {
         ok: false,
         searchUrl,
         pageState,
-        error: 'Bloqueio ou captcha detectado. Intervencao manual necessaria; o bot nao tenta contornar.',
+        error: siteKey === 'familysearch'
+          ? familySearchBlockedMessage()
+          : 'Bloqueio ou captcha detectado. Intervencao manual necessaria; o bot nao tenta contornar.',
         extracted: { site: siteKey, title: '', rawText: '', recordLinks: [] }
       };
     }
@@ -313,12 +407,16 @@ async function runSearch(browser, search, birthWindow) {
       }
     };
   } catch (error) {
-    await saveDebugArtifacts(page, search, 'error').catch(() => null);
+    const pageState = error.pageState || await detectPageState(page).catch(() => 'generic_error');
+    const reason = pageState === 'blocked_or_captcha' ? pageState : 'error';
+    await saveDebugArtifacts(page, search, reason).catch(() => null);
     return {
       ok: false,
       searchUrl,
-      pageState: 'generic_error',
-      error: error.message,
+      pageState,
+      error: pageState === 'blocked_or_captcha' && siteKey === 'familysearch'
+        ? familySearchBlockedMessage()
+        : error.message,
       extracted: {
         site: siteKey,
         title: '',

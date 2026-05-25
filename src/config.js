@@ -32,6 +32,9 @@ module.exports = {
     headless: boolFromEnv('HEADLESS', false),
     slowMo: numberFromEnv('SLOW_MODE_MS', 250),
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+    userDataDir: process.env.PUPPETEER_USER_DATA_DIR || undefined,
+    customUserAgent: process.env.CUSTOM_USER_AGENT || undefined,
+    extraArgs: listFromEnv('PUPPETEER_EXTRA_ARGS'),
     minDelayMs: numberFromEnv('MIN_DELAY_MS', 3000),
     maxDelayMs: numberFromEnv('MAX_DELAY_MS', 8000),
     resultLimit: numberFromEnv('RESULT_LIMIT', 5),
@@ -46,6 +49,9 @@ module.exports = {
     geminiPdfModel: process.env.GEMINI_PDF_MODEL,
     geminiFallbackModels: listFromEnv('GEMINI_FALLBACK_MODELS')
   },
+  familySearchMode: ['manual', 'browser'].includes((process.env.FAMILYSEARCH_MODE || '').toLowerCase())
+    ? process.env.FAMILYSEARCH_MODE.toLowerCase()
+    : 'manual',
   credentials: {
     familysearch: {
       email: process.env.FAMILYSEARCH_EMAIL,

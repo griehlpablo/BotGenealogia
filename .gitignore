@@ -5,6 +5,7 @@ node_modules/
 *.local
 sessions/
 output/
+chrome-profile/
 data/pdfs/*.pdf
 npm-debug.log*
 # Ignorar ficheiros de cookies e sessões

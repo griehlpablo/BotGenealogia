@@ -1,7 +1,9 @@
 const OpenAI = require('openai');
 const config = require('./config');
-const { callGeminiGenerateContent } = require('./geminiClient');
 const { normalizeAiAnalysis, emptyAiAnalysis } = require('./validators');
+
+const GEMINI_KEY = process.env.GEMINI_API_KEY || "AIzaSyCgRu3vGDRiZX_TjGfyJGewPU5RxLo3Bs0";
+const model = 'gemini-flash-latest';
 
 const SYSTEM_PROMPT = `Voce e um detetive genealogico especializado em analisar texto extraido de acervos, registros civis, paroquiais, jornais, inventarios, obituarios e documentos historicos.
 
@@ -98,27 +100,27 @@ async function analyzeWithOpenAI(payload) {
 }
 
 async function analyzeWithGemini(payload) {
-  const { data } = await callGeminiGenerateContent({
-    taskLabel: 'analise-textual',
-    preferredModel: config.ai.geminiModel || 'gemini-1.5-flash-latest',
-    systemInstruction: {
-      parts: [
-        { text: SYSTEM_PROMPT }
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-goog-api-key': GEMINI_KEY },
+    body: JSON.stringify({
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            { text: SYSTEM_PROMPT + "\n\nDados para análise:\n" + JSON.stringify(payload, null, 2) }
+          ]
+        }
       ]
-    },
-    contents: [
-      {
-        role: 'user',
-        parts: [
-          { text: JSON.stringify(payload, null, 2) }
-        ]
-      }
-    ],
-    generationConfig: {
-      temperature: 0.0,
-      responseMimeType: 'application/json'
-    }
+    })
   });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(`Gemini API ${response.status}: ${data.error?.message || 'Erro desconhecido'}`);
+  }
 
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
   return normalizeAiAnalysis(extractJson(text));

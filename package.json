@@ -8,6 +8,11 @@
     "start": "node index.js",
     "start:visible": "set HEADLESS=false&& node index.js",
     "start:headless": "set HEADLESS=true&& node index.js",
+    "test:familysearch": "set HEADLESS=false&& set AI_PROVIDER=none&& node scripts/test-familysearch.js",
+    "urls:familysearch": "node scripts/generate-familysearch-urls.js --source=input",
+    "urls:familysearch:pdf": "node scripts/generate-familysearch-urls.js --source=pdf",
+    "urls:familysearch:all": "node scripts/generate-familysearch-urls.js --source=all",
+    "analyze:manual": "node scripts/analyze-manual.js",
     "doctor": "node -e \"require('./src/logic'); require('./src/ai'); require('./src/scraper'); console.log('OK')\""
   },
   "keywords": [

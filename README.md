@@ -48,6 +48,81 @@ npm start
 
 `npm run doctor` apenas carrega os modulos principais para detectar erros de importacao/configuracao local.
 
+## Teste isolado do FamilySearch
+
+Para validar apenas o scraper do FamilySearch, sem IA e sem leitura de PDFs:
+
+```bash
+npm run test:familysearch
+```
+
+Quando a janela abrir, faça login manualmente no FamilySearch. Depois que a pagina carregar, aguarde: o bot salvará os cookies em `sessions/` automaticamente.
+
+Rode `npm run test:familysearch` de novo para testar o reaproveitamento da sessao salva.
+
+Se aparecer Error 15 no bot, mas nao no Chrome normal:
+
+- apague `sessions/familysearch-cookies.json`;
+- teste de novo em modo visivel;
+- se persistir, use um perfil persistente proprio do projeto com `PUPPETEER_USER_DATA_DIR=./chrome-profile`;
+- nao use VPN/proxy e nao use o perfil principal do Chrome aberto ao mesmo tempo.
+
+## FamilySearch Error 15 e modo manual
+
+A partir do modo manual, o bot nao tenta contornar Error 15 nem automatizar o login no FamilySearch. Ele gera a URL da busca e voce abre no Chrome normal.
+
+1. Gere as URLs de busca FamilySearch a partir de `data/input.json`:
+
+```bash
+npm run urls:familysearch
+```
+
+2. Gere URLs apenas a partir de PDFs em `data/pdfs`:
+
+```bash
+npm run urls:familysearch:pdf
+```
+
+3. Gere URLs a partir de ambos `data/input.json` e `data/pdfs`:
+
+```bash
+npm run urls:familysearch:all
+```
+
+Cada URL agora inclui a origem do registro, por exemplo:
+
+```text
+[input.json] Maria Silva: https://...
+[pdf:arquivo.pdf] Giacoma Cologni: https://...
+```
+
+4. Abra cada URL no Chrome normal.
+
+5. Copie o texto da pagina de resultados ou salve o HTML.
+
+6. Coloque os arquivos em:
+
+```text
+data/manual/
+```
+
+Exemplos:
+
+```text
+data/manual/maria-silva.txt
+data/manual/giacoma-cologni.html
+```
+
+7. Rode a analise manual:
+
+```bash
+npm run analyze:manual
+```
+
+8. Verifique o relatorio em `output/`.
+
+O bot nao tenta mascarar fingerprint, proxy, captchas ou outros bloqueios. Ele aceita apenas o modo manual para FamilySearch.
+
 ## Entrada manual
 
 Edite `data/input.json`:
