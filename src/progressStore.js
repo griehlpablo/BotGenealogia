@@ -50,7 +50,7 @@ function retryAfterFor(status, now = new Date()) {
 }
 
 async function updatePersonProgress({ search, source, result, status, now = new Date() }) {
-  const progress = await readProgress();
+  const progress = arguments[0].progress || await readProgress();
   const key = searchKey(search, source);
   const shouldRetryAfterDays = retryDaysForStatus(status);
   progress.people[key] = {
@@ -63,7 +63,7 @@ async function updatePersonProgress({ search, source, result, status, now = new 
     retryAfter: retryAfterFor(status, now),
     reason: result.error || result.diagnostics?.skippedReasons?.[0]?.reason || ''
   };
-  await writeProgress(progress);
+  if (!arguments[0].skipWrite) await writeProgress(progress);
   return progress.people[key];
 }
 
@@ -100,6 +100,7 @@ async function getNextSearchesForRun(searches, source, options = {}) {
 }
 
 module.exports = {
+  progressPath,
   readProgress,
   writeProgress,
   updatePersonProgress,
