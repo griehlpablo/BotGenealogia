@@ -3,17 +3,43 @@ name: Genealogy Search
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 8 * * *"
+    - cron: "0 */6 * * *"
 
 jobs:
   search:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      HEADLESS: "true"
+      FAMILYSEARCH_MODE: "manual"
+
+      AI_PROVIDER: ${{ secrets.AI_PROVIDER }}
+      GEMINI_API_KEY: ${{ secrets.AIzaSyCgRu3vGDRiZX_TjGfyJGewPU5RxLo3Bs0Y }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+      WEB_SEARCH_PROVIDER: "duckduckgo"
+      WEB_SEARCH_LIMIT: "3"
+      WEB_SEARCH_MAX_QUERIES: "1"
+      WEB_COLLECT_MAX_PAGES: "1"
+
+      WEB_MAX_PEOPLE_PER_RUN: "5"
+      WEB_MAX_ATTEMPTS_PER_RUN: "15"
+      WEB_MAX_SUCCESSFUL_SEARCHES_PER_RUN: "1"
+
+      WEB_SEARCH_DELAY_MIN_MS: "60000"
+      WEB_SEARCH_DELAY_MAX_MS: "180000"
+      WEB_COLLECT_DELAY_MIN_MS: "30000"
+      WEB_COLLECT_DELAY_MAX_MS: "120000"
+
+      WEB_STOP_ON_CAPTCHA: "true"
+      WEB_EXCLUDED_DOMAINS: "wikipedia.org,wikidata.org,facebook.com,instagram.com,youtube.com"
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -21,8 +47,16 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Doctor
+      - name: Run doctor
         run: npm run doctor
 
-      - name: Run genealogy web queue
+      - name: Run genealogy search
         run: npm run search:web:pdf:queue:ci
+
+      - name: Upload output
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: genealogy-output
+          path: output/
+          if-no-files-found: warn
