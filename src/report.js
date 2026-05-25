@@ -20,10 +20,25 @@ function summarize(results) {
   return results.reduce((acc, result) => {
     acc.total += 1;
     if (result.error || !result.ok) acc.errors += 1;
+    const status = result.status || 'no_results';
+    acc.byStatus[status] = (acc.byStatus[status] || 0) + 1;
     const confidence = confidenceOf(result);
     acc[confidence] = (acc[confidence] || 0) + 1;
     return acc;
-  }, { total: 0, errors: 0, high: 0, medium: 0, low: 0 });
+  }, { total: 0, errors: 0, high: 0, medium: 0, low: 0, byStatus: {} });
+}
+
+function statusLabel(status) {
+  const labels = {
+    found: 'Encontrado',
+    no_results: 'Sem resultados',
+    weak_context: 'Contexto fraco',
+    manual_required: 'Manual required',
+    skipped_generic: 'Pulado por query generica',
+    captcha: 'Captcha',
+    error: 'Erro'
+  };
+  return labels[status] || status || 'Nao informado';
 }
 
 function renderLinks(links = []) {
@@ -103,6 +118,38 @@ function renderDiagnostics(diagnostics) {
   `;
 }
 
+function renderResearchPlan(result) {
+  const plan = result.researchPlan || result.diagnostics?.researchPlan;
+  if (!plan) return '<p class="muted">Plano de pesquisa nao disponivel.</p>';
+  const strength = plan.targetStrength || {};
+  const avoidedDirect = plan.strategy === 'search_relatives_first' || plan.strategy === 'manual_only';
+  return `
+    <p>
+      <strong>Forca:</strong> ${escapeHtml(strength.level || '')}
+      <span> | </span>
+      <strong>Score:</strong> ${escapeHtml(strength.score ?? '')}
+      <span> | </span>
+      <strong>Estrategia:</strong> ${escapeHtml(plan.strategy || '')}
+    </p>
+    ${avoidedDirect ? '<p class="muted">Busca direta evitada para reduzir falsos positivos.</p>' : ''}
+    <p>${escapeHtml(plan.targetStrength?.reasons?.join(' ') || '')}</p>
+    <h4>Parentes considerados</h4>
+    ${plan.relativesConsidered?.length
+      ? `<ul>${plan.relativesConsidered.map((relative) => `<li>${escapeHtml(relative.type)}: ${escapeHtml(relative.name)} (${escapeHtml(relative.confidence)}) - ${escapeHtml(relative.reason)}</li>`).join('')}</ul>`
+      : '<p class="muted">Nenhum parente considerado.</p>'}
+    <h4>Nomes extraidos do reason</h4>
+    ${plan.extractedNamesFromReason?.length
+      ? `<ul>${plan.extractedNamesFromReason.map((item) => `<li>${escapeHtml(item.name)} - ${escapeHtml(item.relationHint)} (${escapeHtml(item.confidence)})</li>`).join('')}</ul>`
+      : '<p class="muted">Nenhum nome extraido do reason.</p>'}
+    <p><strong>Sobrenomes candidatos:</strong> ${escapeHtml((plan.candidateSurnames || []).join(', ') || 'nenhum')}</p>
+    <details>
+      <summary>Passos planejados</summary>
+      <pre>${escapeHtml(JSON.stringify(plan.steps || [], null, 2))}</pre>
+    </details>
+    ${result.enrichmentResult ? `<details><summary>Enriquecimento</summary><pre>${escapeHtml(JSON.stringify(result.enrichmentResult, null, 2))}</pre></details>` : ''}
+  `;
+}
+
 function renderRelationships(relationships = []) {
   if (relationships.length === 0) return '<p class="muted">Sem relacoes familiares detectadas.</p>';
   return `<ul>${relationships.map((relation) => `
@@ -170,13 +217,20 @@ function renderResult(result) {
         <p>
           <strong>Estado:</strong> ${escapeHtml(result.pageState || 'nao informado')}
           <span> | </span>
+          <strong>Status:</strong> ${escapeHtml(statusLabel(result.status))}
+          <span> | </span>
           <a href="${escapeHtml(result.searchUrl)}" target="_blank" rel="noreferrer">Abrir busca original</a>
         </p>
       </header>
+      ${result.status === 'weak_context'
+        ? '<p class="muted">Contexto fraco - busca direta evitada. Sera retomada depois que parentes ou novas pistas forem encontrados.</p>'
+        : ''}
       ${result.error ? `<p class="error">Erro no scraping: ${escapeHtml(result.error)}</p>` : ''}
       ${result.diagnostics?.captchaDetected
         ? `<p class="error">Captcha detectado no provedor ${escapeHtml(captchaProvider)}. A execucao foi interrompida para evitar insistencia.</p>`
         : ''}
+      <h3>Plano de pesquisa genealogica</h3>
+      ${renderResearchPlan(result)}
       <h3>Hipoteses</h3>
       ${result.aiAnalysis === null
         ? '<p class="muted">Nenhuma analise por IA foi executada porque nenhum texto publico foi coletado.</p>'
@@ -205,7 +259,32 @@ function renderResult(result) {
   `;
 }
 
-async function writeHtmlReport(results) {
+function renderSkippedPeople(skipped = [], results = []) {
+  const fromResults = results
+    .filter((result) => ['weak_context', 'manual_required', 'no_results', 'skipped_generic'].includes(result.status))
+    .map((result) => ({
+      name: [result.search.givenName, result.search.surname].filter(Boolean).join(' ') || result.search.id || 'sem nome',
+      reason: result.error || result.diagnostics?.skippedReasons?.[0]?.reason || statusLabel(result.status),
+      retryAfter: result.progress?.retryAfter || '',
+      nextAction: result.status === 'weak_context' ? 'FamilySearch manual ou pesquisar parentes.' : 'Reavaliar depois do intervalo configurado.'
+    }));
+  const fromQueue = skipped.map((item) => ({
+    name: [item.search?.givenName, item.search?.surname].filter(Boolean).join(' ') || item.search?.id || 'sem nome',
+    reason: item.reason,
+    retryAfter: item.retryAfter || '',
+    nextAction: 'Aguardar cooldown do progresso.'
+  }));
+  const items = [...fromResults, ...fromQueue];
+  if (items.length === 0) return '<p class="muted">Nenhuma pessoa pulada nesta rodada.</p>';
+  return `<ul>${items.map((item) => `
+    <li>
+      <strong>${escapeHtml(item.name)}</strong> - ${escapeHtml(item.reason)}
+      ${item.retryAfter ? `<br><small>Tentar novamente depois de ${escapeHtml(item.retryAfter)}</small>` : ''}
+      <br><small>Proxima acao: ${escapeHtml(item.nextAction)}</small>
+    </li>`).join('')}</ul>`;
+}
+
+async function writeHtmlReport(results, meta = {}) {
   await fs.mkdir(config.outputDir, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const htmlPath = path.join(config.outputDir, `relatorio-${stamp}.html`);
@@ -253,7 +332,25 @@ async function writeHtmlReport(results) {
         <span> | </span>
         <strong>Baixa:</strong> ${summary.low}
       </p>
+      <p>
+        <strong>Encontrados:</strong> ${summary.byStatus.found || 0}
+        <span> | </span>
+        <strong>Sem resultados:</strong> ${summary.byStatus.no_results || 0}
+        <span> | </span>
+        <strong>Contexto fraco:</strong> ${summary.byStatus.weak_context || 0}
+        <span> | </span>
+        <strong>Manual required:</strong> ${summary.byStatus.manual_required || 0}
+        <span> | </span>
+        <strong>Captcha:</strong> ${summary.byStatus.captcha || 0}
+        <span> | </span>
+        <strong>Erros:</strong> ${summary.byStatus.error || 0}
+      </p>
+      ${meta.queueSummary ? `<p class="muted">Fila: ${escapeHtml(JSON.stringify(meta.queueSummary))}</p>` : ''}
     </div>
+    <section class="summary">
+      <h2>Pessoas puladas nesta rodada</h2>
+      ${renderSkippedPeople(meta.queueSkipped || [], results)}
+    </section>
     ${results.map(renderResult).join('\n')}
   </main>
 </body>

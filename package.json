@@ -19,13 +19,19 @@
     "search:web:pdf": "node scripts/search-web.js --source=pdf",
     "search:web:pdf:tiny": "set WEB_SEARCH_MAX_QUERIES=1&& set WEB_COLLECT_MAX_PAGES=1&& set WEB_MAX_PEOPLE_PER_RUN=1&& node scripts/search-web.js --source=pdf",
     "search:web:pdf:small": "set WEB_SEARCH_MAX_QUERIES=2&& set WEB_COLLECT_MAX_PAGES=3&& set WEB_MAX_PEOPLE_PER_RUN=3&& node scripts/search-web.js --source=pdf",
+    "search:web:pdf:queue": "set WEB_MAX_PEOPLE_PER_RUN=5&& set WEB_MAX_ATTEMPTS_PER_RUN=15&& set WEB_SEARCH_MAX_QUERIES=1&& set WEB_COLLECT_MAX_PAGES=1&& node scripts/search-web.js --source=pdf --cloud-safe --continue-on-skip",
+    "search:web:next": "npm run search:web:pdf:queue",
     "search:web:all": "node scripts/search-web.js --source=all",
     "test:web-query": "node scripts/test-web-query.js",
     "test:web-query:maria": "node scripts/test-web-query-maria.js",
+    "test:query-relaxation": "node scripts/test-web-query-maria.js",
+    "test:search-strength": "node scripts/test-search-strength.js",
+    "test:research-plan": "node scripts/test-research-plan.js",
+    "test:queue-planner": "node scripts/test-queue-planner.js",
     "test:web-provider": "node scripts/test-web-provider.js",
     "test:web-collector": "node scripts/test-web-collector.js",
     "analyze:manual": "node scripts/analyze-manual.js",
-    "doctor": "node -e \"require('./src/logic'); require('./src/ai'); require('./src/scraper'); require('./src/queryGenerator'); require('./src/webSearch'); require('./src/webCollector'); require('./src/sourceClassifier'); require('./src/cooldown'); require('./src/preCollectScoring'); require('./src/siteExtractors/google'); require('./src/siteExtractors/bing'); require('./src/siteExtractors/duckduckgo'); console.log('OK')\""
+    "doctor": "node -e \"require('./src/logic'); require('./src/ai'); require('./src/scraper'); require('./src/queryGenerator'); require('./src/webSearch'); require('./src/webCollector'); require('./src/sourceClassifier'); require('./src/cooldown'); require('./src/preCollectScoring'); require('./src/searchStrength'); require('./src/familyContext'); require('./src/researchPlanner'); require('./src/contextEnricher'); require('./src/resultStatus'); require('./src/progressStore'); require('./src/siteExtractors/google'); require('./src/siteExtractors/bing'); require('./src/siteExtractors/duckduckgo'); console.log('OK')\""
   },
   "keywords": [
     "genealogy",

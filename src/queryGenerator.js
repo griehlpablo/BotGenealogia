@@ -76,6 +76,18 @@ function quote(value) {
   return text ? `"${text}"` : '';
 }
 
+function webPlace(value) {
+  const text = normalizeText(value);
+  const map = {
+    dinamarca: 'Denmark',
+    'itÃ¡lia': 'Italy',
+    italia: 'Italy',
+    espanha: 'Spain',
+    brasil: 'Brazil'
+  };
+  return map[normalizeForMatch(text)] || text;
+}
+
 function buildBaseName(search) {
   const given = normalizeText(search.givenName);
   const family = normalizeText(search.surname);
@@ -147,7 +159,7 @@ function extractNamesFromReason(reason) {
   return [...new Set(names)];
 }
 
-function buildContext(search) {
+function buildContext(search, externalContext = {}) {
   const relatives = [
     normalizeText(search.father),
     normalizeText(search.mother),
@@ -162,9 +174,21 @@ function buildContext(search) {
     if (pieces.length > 1) surnames.add(pieces[pieces.length - 1]);
   }
 
+  const externalRelatives = (externalContext.relatives || [])
+    .map((relative) => relative.name || [relative.search?.givenName, relative.search?.surname].filter(Boolean).join(' '))
+    .filter(Boolean);
+  for (const relative of externalRelatives) {
+    relatives.push(relative);
+    const pieces = relative.split(/\s+/).filter(Boolean);
+    if (pieces.length > 1) surnames.add(pieces[pieces.length - 1]);
+  }
+  for (const surname of externalContext.candidateSurnames || []) surnames.add(surname);
+
   return {
     relatives: [...new Set(relatives)],
-    relativeSurnames: [...surnames]
+    relativeSurnames: [...surnames],
+    discoveredFacts: externalContext.discoveredFacts || [],
+    strategy: externalContext.strategy || 'direct_search'
   };
 }
 
@@ -189,9 +213,9 @@ function usefulTokens(query) {
     .filter((token) => token.length > 1);
 }
 
-function hasParentContext(search, query = '') {
+function hasParentContext(search, query = '', externalContext = {}) {
   const text = normalizeForMatch(query);
-  const context = buildContext(search);
+  const context = buildContext(search, externalContext);
   if (context.relatives.length > 0) return true;
   if (search.reason && text && usefulTokens(search.reason).some((token) => text.includes(token))) return true;
   if (Array.isArray(search.childrenBirthYears) && search.childrenBirthYears.length > 0) return true;
@@ -205,7 +229,7 @@ function isBroadPlace(place) {
   return !/[,\-]/.test(place) && normalized.split(/\s+/).length <= 2;
 }
 
-function isQueryTooGeneric(queryObject, search = {}) {
+function isQueryTooGeneric(queryObject, search = {}, externalContext = {}) {
   const query = normalizeText(queryObject?.query || queryObject);
   const reasons = [];
   const tokens = usefulTokens(query);
@@ -215,7 +239,7 @@ function isQueryTooGeneric(queryObject, search = {}) {
   const lowerQuery = normalizeForMatch(query);
   const commonGiven = COMMON_GIVEN_NAMES.has(given);
   const hasSurname = Boolean(surname) && lowerQuery.includes(normalizeForMatch(surname));
-  const context = buildContext(search);
+  const context = buildContext(search, externalContext);
   const hasRelative = context.relatives.some((relative) => lowerQuery.includes(normalizeForMatch(relative)))
     || context.relativeSurnames.some((relativeSurname) => lowerQuery.includes(normalizeForMatch(relativeSurname)));
   const hasYear = /\b(1[4-9]\d{2}|20\d{2})\b/.test(query);
@@ -240,7 +264,7 @@ function isQueryTooGeneric(queryObject, search = {}) {
   };
 }
 
-function generateQueries(search = {}) {
+function generateQueries(search = {}, externalContext = {}) {
   const givenName = normalizeText(search.givenName);
   const surname = normalizeText(search.surname);
   const place = normalizeText(search.place);
@@ -248,7 +272,7 @@ function generateQueries(search = {}) {
   const deathYear = search.deathYear;
   const coreName = buildBaseName(search);
   const variants = buildNameVariants(search);
-  const context = buildContext(search);
+  const context = buildContext(search, externalContext);
   const targetSites = ['google', 'bing', 'duckduckgo'];
   const queries = [];
 
@@ -260,7 +284,7 @@ function generateQueries(search = {}) {
   const hasPlace = Boolean(place);
   const hasYear = Boolean(birthYear || deathYear);
   const highConfidence = hasSurname && givenName;
-  const broadPlaceOnly = givenName && !hasSurname && hasPlace && isBroadPlace(place) && !hasParentContext(search);
+  const broadPlaceOnly = givenName && !hasSurname && hasPlace && isBroadPlace(place) && !hasParentContext(search, '', externalContext);
 
   if (broadPlaceOnly) {
     return [{
@@ -293,12 +317,21 @@ function generateQueries(search = {}) {
     const year = birthYear ? String(birthYear) : '';
     const firstRelative = context.relatives[0];
     const firstRelativeSurname = context.relativeSurnames[0];
-    addUnique(queries, buildQueryTemplate(quote(givenName), [quote(firstRelative), quote(place), quote(year)], 1, 'given_relative_place_year', targetSites, search.id));
+    addUnique(queries, buildQueryTemplate(quote(givenName), [quote(firstRelative), webPlace(place), year], 1, 'given_relative_place_year', targetSites, search.id));
     if (context.relatives.length > 1) {
-      addUnique(queries, buildQueryTemplate(quote(givenName), [quote(context.relatives[0]), quote(context.relatives[1]), quote(place)], 1, 'given_multiple_relatives_place', targetSites, search.id));
+      addUnique(queries, buildQueryTemplate(quote(givenName), [quote(context.relatives[0]), quote(context.relatives[1]), webPlace(place)], 1, 'given_multiple_relatives_place', targetSites, search.id));
     }
     if (firstRelativeSurname) {
-      addUnique(queries, buildQueryTemplate(quote(givenName), [quote(firstRelativeSurname), quote(place), quote(year)], 2, 'given_relative_surname_place_year', targetSites, search.id));
+      addUnique(queries, buildQueryTemplate(quote(givenName), [firstRelativeSurname, webPlace(place), year], 2, 'given_relative_surname_place_year', targetSites, search.id));
+      addUnique(queries, buildQueryTemplate(quote(givenName), [firstRelativeSurname, 'genealogy'], 2, 'given_candidate_surname_genealogy', targetSites, search.id));
+      addUnique(queries, buildQueryTemplate(quote(givenName), [firstRelativeSurname, 'FamilySearch'], 2, 'given_candidate_surname_familysearch', targetSites, search.id));
+      addUnique(queries, buildQueryTemplate(quote(givenName), [firstRelativeSurname, 'Geneanet'], 2, 'given_candidate_surname_geneanet', targetSites, search.id));
+    }
+  }
+
+  if (externalContext.strategy === 'enriched_target_search') {
+    for (const candidate of externalContext.candidateQueries || []) {
+      addUnique(queries, buildQueryTemplate(candidate, [], 1, 'enriched_candidate_query', targetSites, search.id));
     }
   }
 
@@ -321,7 +354,7 @@ function generateQueries(search = {}) {
 
   for (const query of queries) {
     if (!query.query || query.query.length < 5) continue;
-    const genericCheck = isQueryTooGeneric(query, search);
+    const genericCheck = isQueryTooGeneric(query, search, externalContext);
     if (genericCheck.tooGeneric) {
       filtered.push({
         ...query,

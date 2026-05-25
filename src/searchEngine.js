@@ -9,10 +9,22 @@ const { analyzeGenealogyText } = require('./ai');
 const { buildSearchUrl } = require('./scraper');
 const { scoreAnalysis } = require('./scoring');
 const { deduceBirthWindow } = require('./logic');
+const { createResearchPlan } = require('./researchPlanner');
+const { enrichWeakPersonWithRelativeResults } = require('./contextEnricher');
+const { normalizeResultStatus, queueFlagsForStatus } = require('./resultStatus');
 
-async function runSearchPipeline(browser, search) {
+function finalizeResult(result) {
+  const status = normalizeResultStatus(result);
+  return {
+    ...result,
+    status,
+    ...queueFlagsForStatus(status)
+  };
+}
+
+async function executeDirectSearch(browser, search, options = {}) {
   const birthWindow = deduceBirthWindow(search);
-  const queries = generateQueries(search).slice(0, config.webSearch.maxQueries || 30);
+  const queries = (options.queries || generateQueries(search, options.queryContext || {})).slice(0, config.webSearch.maxQueries || 30);
   const collected = [];
   const webResultRecords = [];
   const manualSources = [];
@@ -33,7 +45,10 @@ async function runSearchPipeline(browser, search) {
     captchaDetected: false,
     providerCooldown: null,
     searchErrors: [],
-    collectErrors: []
+    collectErrors: [],
+    researchPlan: options.researchPlan || null,
+    researchStep: options.researchStep || null,
+    enrichmentResult: options.enrichmentResult || null
   };
   let firstSearchUrl = '';
   let manualRequired = false;
@@ -45,7 +60,7 @@ async function runSearchPipeline(browser, search) {
   }
 
   if (!queries.length) {
-    return {
+    return finalizeResult({
       search,
       birthWindow,
       ok: false,
@@ -58,11 +73,11 @@ async function runSearchPipeline(browser, search) {
       manualRequired,
       manualSources,
       diagnostics
-    };
+    });
   }
 
   for (const query of queries) {
-    if (collected.length >= config.webSearch.collectMaxPages) break;
+    if (collected.length >= (options.collectMaxPages || config.webSearch.collectMaxPages)) break;
     if (query.skipWeb) {
       diagnostics.queriesSkipped += 1;
       diagnostics.skippedReasons.push({ type: 'generic_query', query: query.query, reason: query.reason });
@@ -135,7 +150,7 @@ async function runSearchPipeline(browser, search) {
     diagnostics.searchResultsFound += searchResult.results.length;
 
     for (const item of searchResult.results) {
-      if (collected.length >= config.webSearch.collectMaxPages) break;
+      if (collected.length >= (options.collectMaxPages || config.webSearch.collectMaxPages)) break;
       if (visitedUrls.has(item.url)) continue;
       visitedUrls.add(item.url);
       diagnostics.urlsVisited += 1;
@@ -242,7 +257,7 @@ async function runSearchPipeline(browser, search) {
 
   const bestPages = collected
     .sort((a, b) => b.scoredPage.objectiveScore - a.scoredPage.objectiveScore)
-    .slice(0, config.webSearch.collectMaxPages || 20);
+    .slice(0, options.collectMaxPages || config.webSearch.collectMaxPages || 20);
 
   const aggregatedText = bestPages.map((entry) => entry.pageData.rawText).join('\n\n').slice(0, 14000);
   const recordLinks = [...new Set(bestPages.flatMap((entry) => entry.pageData.links.map((link) => link.href)))]
@@ -282,7 +297,7 @@ async function runSearchPipeline(browser, search) {
       error = 'Algumas fontes exigem acao manual, mas resultados web publicos foram coletados.';
     }
 
-    return {
+    return finalizeResult({
       search,
       birthWindow,
       ok: false,
@@ -299,8 +314,11 @@ async function runSearchPipeline(browser, search) {
       manualSources,
       captchaDetected: diagnostics.captchaDetected,
       providerCooldown: diagnostics.providerCooldown,
+      researchPlan: options.researchPlan || null,
+      researchStep: options.researchStep || null,
+      enrichmentResult: options.enrichmentResult || null,
       diagnostics
-    };
+    });
   }
 
   const aiAnalysis = await analyzeGenealogyText({
@@ -314,7 +332,7 @@ async function runSearchPipeline(browser, search) {
 
   const scoredAi = scoreAnalysis(aiAnalysis, search, birthWindow);
 
-  return {
+  return finalizeResult({
     search,
     birthWindow,
     ok: true,
@@ -331,7 +349,182 @@ async function runSearchPipeline(browser, search) {
     manualSources,
     captchaDetected: diagnostics.captchaDetected,
     providerCooldown: diagnostics.providerCooldown,
+    researchPlan: options.researchPlan || null,
+    researchStep: options.researchStep || null,
+    enrichmentResult: options.enrichmentResult || null,
     diagnostics
+  });
+}
+
+async function runSearchPipeline(browser, search, allSearches = []) {
+  const researchPlan = createResearchPlan(search, allSearches);
+  const planSummary = summarizePlan(researchPlan);
+
+  if (researchPlan.strategy === 'manual_only') {
+    const birthWindow = deduceBirthWindow(search);
+    return finalizeResult({
+      search,
+      birthWindow,
+      ok: false,
+      pageState: 'no_queries',
+      searchUrl: buildSearchUrl(search, birthWindow),
+      error: 'Pessoa fraca demais para busca web geral. Busca direta evitada para reduzir falsos positivos.',
+      rawText: '',
+      recordLinks: [],
+      aiAnalysis: null,
+      webResults: [],
+      manualRequired: true,
+      manualSources: [],
+      captchaDetected: false,
+      providerCooldown: null,
+      researchPlan: planSummary,
+      diagnostics: {
+        researchPlan: planSummary,
+        stepsExecuted: [],
+        queriesGenerated: 0,
+        queriesTried: [],
+        queriesSkipped: 0,
+        skippedReasons: [{ type: 'manual_only', reason: 'Baixa pesquisabilidade; busca web pulada.' }],
+        searchResultsFound: 0,
+        urlsVisited: 0,
+        pagesCollected: 0,
+        pagesSkipped: 0,
+        urlsSkippedBeforeCollect: 0,
+        excludedDomainsSkipped: 0,
+        lowRelevanceSkipped: 0,
+        captchaDetected: false,
+        providerCooldown: null,
+        searchErrors: [],
+        collectErrors: []
+      }
+    });
+  }
+
+  if (researchPlan.strategy !== 'search_relatives_first') {
+    return executeDirectSearch(browser, search, {
+      researchPlan: planSummary,
+      researchStep: researchPlan.steps[0] || null
+    });
+  }
+
+  const stepsExecuted = [];
+  const relativeResults = [];
+  const relativeSteps = researchPlan.steps
+    .filter((step) => step.type === 'search_relative')
+    .slice(0, config.webSearch.relativeSearchLimit || 2);
+
+  for (const step of relativeSteps) {
+    stepsExecuted.push({ type: step.type, name: [step.search.givenName, step.search.surname].filter(Boolean).join(' '), reason: step.reason });
+    const result = await executeDirectSearch(browser, step.search, {
+      researchPlan: planSummary,
+      researchStep: step,
+      collectMaxPages: 1
+    });
+    if (result.rawText?.trim()) {
+      relativeResults.push({ search: step.search, rawText: result.rawText, webResults: result.webResults });
+    }
+    if (result.diagnostics?.captchaDetected || result.diagnostics?.providerCooldown) {
+      result.researchPlan = { ...planSummary, stepsExecuted };
+      result.diagnostics.researchPlan = result.researchPlan;
+      return result;
+    }
+  }
+
+  const enrichmentResult = await enrichWeakPersonWithRelativeResults(search, relativeResults);
+  const shouldSearchTarget = enrichmentResult.candidateQueries.length > 0 || enrichmentResult.discoveredFacts.length > 0;
+
+  if (!shouldSearchTarget) {
+    const birthWindow = deduceBirthWindow(search);
+    return finalizeResult({
+      search,
+      birthWindow,
+      ok: false,
+      pageState: 'weak_context_manual_required',
+      searchUrl: buildSearchUrl(search, birthWindow),
+      error: 'Contexto fraco: parentes nao trouxeram evidencias suficientes para buscar a pessoa alvo com seguranca.',
+      rawText: '',
+      recordLinks: [],
+      aiAnalysis: null,
+      webResults: [],
+      manualRequired: true,
+      manualSources: [],
+      captchaDetected: false,
+      providerCooldown: null,
+      researchPlan: { ...planSummary, stepsExecuted },
+      enrichmentResult,
+      diagnostics: {
+        researchPlan: { ...planSummary, stepsExecuted },
+        enrichmentResult,
+        stepsExecuted,
+        queriesGenerated: 0,
+        queriesTried: [],
+        queriesSkipped: 1,
+        skippedReasons: [{
+          type: 'weak_context',
+          reason: researchPlan.familyContext.relatives.length === 0
+            ? 'Sem parentes disponiveis no contexto atual.'
+            : 'Busca direta evitada para reduzir falsos positivos.'
+        }],
+        searchResultsFound: 0,
+        urlsVisited: 0,
+        pagesCollected: 0,
+        pagesSkipped: 0,
+        urlsSkippedBeforeCollect: 0,
+        excludedDomainsSkipped: 0,
+        lowRelevanceSkipped: 0,
+        captchaDetected: false,
+        providerCooldown: null,
+        searchErrors: [],
+        collectErrors: []
+      }
+    });
+  }
+
+  const enrichedContext = {
+    strategy: 'enriched_target_search',
+    relatives: researchPlan.familyContext.relatives,
+    candidateSurnames: researchPlan.familyContext.candidateSurnames,
+    discoveredFacts: enrichmentResult.discoveredFacts,
+    candidateQueries: enrichmentResult.candidateQueries
+  };
+
+  const targetStep = researchPlan.steps.find((step) => step.type === 'search_target_enriched') || null;
+  stepsExecuted.push({ type: 'search_target_enriched', reason: targetStep?.reason || 'Busca alvo enriquecida.' });
+  const targetResult = await executeDirectSearch(browser, enrichmentResult.enrichedSearch, {
+    queryContext: enrichedContext,
+    researchPlan: { ...planSummary, stepsExecuted },
+    researchStep: targetStep,
+    enrichmentResult
+  });
+  targetResult.search = search;
+  targetResult.enrichedSearch = enrichmentResult.enrichedSearch;
+  targetResult.researchPlan = { ...planSummary, stepsExecuted };
+  targetResult.enrichmentResult = enrichmentResult;
+  targetResult.diagnostics.researchPlan = targetResult.researchPlan;
+  targetResult.diagnostics.enrichmentResult = enrichmentResult;
+  return targetResult;
+}
+
+function summarizePlan(plan) {
+  return {
+    targetStrength: plan.targetStrength,
+    strategy: plan.strategy,
+    relativesConsidered: plan.familyContext.relatives.map((relative) => ({
+      type: relative.type,
+      name: relative.name,
+      confidence: relative.confidence,
+      reason: relative.reason
+    })),
+    extractedNamesFromReason: plan.familyContext.extractedNamesFromReason,
+    candidateSurnames: plan.familyContext.candidateSurnames,
+    candidatePlaces: plan.familyContext.candidatePlaces,
+    candidateYears: plan.familyContext.candidateYears,
+    steps: plan.steps.map((step) => ({
+      type: step.type,
+      name: [step.search?.givenName, step.search?.surname].filter(Boolean).join(' '),
+      reason: step.reason,
+      priority: step.priority
+    }))
   };
 }
 

@@ -68,7 +68,12 @@ module.exports = {
     collectDelayMaxMs: numberFromEnv('WEB_COLLECT_DELAY_MAX_MS', 60000),
     stopOnCaptcha: boolFromEnv('WEB_STOP_ON_CAPTCHA', true),
     maxPeoplePerRun: numberFromEnv('WEB_MAX_PEOPLE_PER_RUN', 3),
-    cooldownAfterCaptchaMinutes: numberFromEnv('WEB_COOLDOWN_AFTER_CAPTCHA_MINUTES', 60)
+    maxAttemptsPerRun: numberFromEnv('WEB_MAX_ATTEMPTS_PER_RUN', 10),
+    maxSuccessfulSearchesPerRun: numberFromEnv('WEB_MAX_SUCCESSFUL_SEARCHES_PER_RUN', 3),
+    cooldownAfterCaptchaMinutes: numberFromEnv('WEB_COOLDOWN_AFTER_CAPTCHA_MINUTES', 60),
+    relativeSearchLimit: numberFromEnv('WEB_RELATIVE_SEARCH_LIMIT', 2),
+    contextEnrichmentMaxText: numberFromEnv('WEB_CONTEXT_ENRICHMENT_MAX_TEXT', 12000),
+    maxResearchSteps: numberFromEnv('WEB_MAX_RESEARCH_STEPS', 4)
   },
   credentials: {
     familysearch: {
