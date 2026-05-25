@@ -67,20 +67,31 @@ async function main() {
   const inputSearches = (source === 'input' || source === 'all') ? await readInputSearches() : [];
   const pdfSearches = (source === 'pdf' || source === 'all') ? await readPdfSearches() : [];
   const searches = [...inputSearches, ...pdfSearches];
+  const searchesToRun = searches.slice(0, config.webSearch.maxPeoplePerRun);
 
   if (searches.length === 0) {
     console.warn('[search:web] Nenhuma busca encontrada em input.json ou pdfs.');
     return;
   }
 
+  console.log(`[search:web] Limitando execucao a ${searchesToRun.length} pessoas nesta rodada.`);
+
   const browser = await createBrowser();
   const results = [];
 
   try {
-    for (const search of searches) {
+    for (const search of searchesToRun) {
       console.log(`\n[search:web] Executando busca: ${search.givenName || ''} ${search.surname || ''}`);
       const result = await runSearchPipeline(browser, search);
       results.push(result);
+      if (config.webSearch.stopOnCaptcha && result.diagnostics?.captchaDetected) {
+        console.warn('[search:web] Captcha detectado. Encerrando rodada para evitar insistencia.');
+        break;
+      }
+      if (config.webSearch.stopOnCaptcha && result.diagnostics?.providerCooldown) {
+        console.warn('[search:web] Provedor em cooldown. Encerrando rodada para evitar insistencia.');
+        break;
+      }
     }
   } finally {
     await browser.close().catch(() => null);

@@ -15,6 +15,19 @@ async function runSearchPipeline(browser, search) {
   const collected = [];
   const manualSources = [];
   const visitedUrls = new Set();
+  const diagnostics = {
+    queriesGenerated: queries.length,
+    queriesTried: [],
+    searchesTried: [],
+    searchResultsFound: 0,
+    urlsVisited: 0,
+    pagesCollected: 0,
+    pagesSkipped: 0,
+    captchaDetected: false,
+    providerCooldown: null,
+    searchErrors: [],
+    collectErrors: []
+  };
   let firstSearchUrl = '';
   let manualRequired = false;
   let manualSearchUrl = '';
@@ -36,36 +49,109 @@ async function runSearchPipeline(browser, search) {
       aiAnalysis: null,
       webResults: [],
       manualRequired,
-      manualSources
+      manualSources,
+      diagnostics
     };
   }
 
   for (const query of queries) {
     if (collected.length >= config.webSearch.collectMaxPages) break;
+    console.log(`[searchEngine] Query: ${query.query}`);
+    diagnostics.queriesTried.push(query.query);
     const searchResult = await searchWeb(browser, query);
     if (!firstSearchUrl) firstSearchUrl = searchResult.searchUrl;
-    if (!searchResult.ok) continue;
+    const attempts = searchResult.attempts?.length ? searchResult.attempts : [{
+      provider: searchResult.provider,
+      query: query.query,
+      searchUrl: searchResult.searchUrl,
+      ok: searchResult.ok,
+      pageState: searchResult.pageState,
+      error: searchResult.error,
+      resultsCount: searchResult.results?.length || 0
+    }];
+
+    diagnostics.searchesTried.push(...attempts);
+    for (const attempt of attempts) {
+      console.log(`[searchEngine] Provider ${attempt.provider} retornou ${attempt.resultsCount || 0} resultados para: ${query.query}`);
+      if (attempt.ok === false) {
+        diagnostics.searchErrors.push({
+          query: query.query,
+          provider: attempt.provider,
+          searchUrl: attempt.searchUrl,
+          pageState: attempt.pageState,
+          error: attempt.error,
+          captchaDetected: Boolean(attempt.captchaDetected),
+          providerCooldown: attempt.providerCooldown
+        });
+      }
+      if (attempt.captchaDetected) {
+        diagnostics.captchaDetected = true;
+        diagnostics.providerCooldown = attempt.providerCooldown || diagnostics.providerCooldown;
+      }
+      if (attempt.providerCooldown) {
+        diagnostics.providerCooldown = attempt.providerCooldown;
+      }
+    }
+
+    if (searchResult.captchaDetected) {
+      diagnostics.captchaDetected = true;
+      diagnostics.providerCooldown = searchResult.providerCooldown || diagnostics.providerCooldown;
+      break;
+    }
+
+    if (searchResult.pageState === 'provider_cooldown') {
+      diagnostics.providerCooldown = searchResult.providerCooldown || diagnostics.providerCooldown;
+      break;
+    }
+
+    if (!searchResult.ok) {
+      continue;
+    }
+
+    diagnostics.searchResultsFound += searchResult.results.length;
 
     for (const item of searchResult.results) {
       if (collected.length >= config.webSearch.collectMaxPages) break;
       if (visitedUrls.has(item.url)) continue;
       visitedUrls.add(item.url);
+      diagnostics.urlsVisited += 1;
 
       const sourceType = classifyUrl(item.url, item.snippet, item.title);
       if (sourceType === 'familysearch') {
         manualRequired = true;
         manualSources.push({ url: item.url, title: item.title, sourceType, query: query.query });
+        diagnostics.pagesSkipped += 1;
         continue;
       }
 
+      console.log(`[webCollector] Coletando: ${item.url}`);
       const pageData = await collectPublicPage(browser, item, { maxText: 14000 });
+      if (pageData.ok && pageData.rawText.trim()) {
+        console.log(`[webCollector] OK: ${pageData.rawText.length} chars`);
+      } else {
+        console.warn(`[webCollector] Falhou: ${pageData.pageState}${pageData.error ? `/${pageData.error}` : ''}`);
+      }
+
       if (!pageData.ok && pageData.pageState === 'manual_required') {
         manualRequired = true;
         manualSources.push({ url: item.url, title: item.title, sourceType, reason: pageData.error });
       }
 
+      if (!pageData.ok || !pageData.rawText.trim()) {
+        diagnostics.pagesSkipped += 1;
+        diagnostics.collectErrors.push({
+          url: item.url,
+          title: item.title,
+          sourceType,
+          pageState: pageData.pageState,
+          error: pageData.error || 'Coletor retornou texto vazio.'
+        });
+        continue;
+      }
+
       const scoredPage = scoreWebResult(pageData, search, birthWindow, sourceType);
       collected.push({ query, item, pageData, sourceType, scoredPage });
+      diagnostics.pagesCollected += 1;
     }
   }
 
@@ -75,6 +161,51 @@ async function runSearchPipeline(browser, search) {
 
   const aggregatedText = bestPages.map((entry) => entry.pageData.rawText).join('\n\n').slice(0, 14000);
   const recordLinks = [...new Set(bestPages.flatMap((entry) => entry.pageData.links.map((link) => link.href)))].slice(0, 50);
+
+  const webResults = bestPages.map((entry) => ({
+    query: entry.query.query,
+    title: entry.item.title,
+    url: entry.item.url,
+    snippet: entry.item.snippet,
+    sourceType: entry.sourceType,
+    objectiveScore: entry.scoredPage.objectiveScore,
+    confidenceHint: entry.scoredPage.confidenceHint,
+    pageState: entry.pageData.pageState,
+    error: entry.pageData.error
+  }));
+
+  if (!aggregatedText.trim()) {
+    let error = 'Nenhuma pagina publica relevante foi coletada para analise.';
+    if (diagnostics.captchaDetected) {
+      error = `Captcha detectado no provedor ${diagnostics.providerCooldown?.provider || diagnostics.searchErrors.find((item) => item.captchaDetected)?.provider || 'web'}. A execucao foi interrompida para evitar insistencia.`;
+    } else if (diagnostics.providerCooldown) {
+      error = `Provedor ${diagnostics.providerCooldown.provider || 'web'} em cooldown ate ${diagnostics.providerCooldown.until}. Nenhuma busca foi executada neste provedor.`;
+    } else if (manualRequired && bestPages.length === 0) {
+      error = 'FamilySearch exige acao manual e nenhuma pagina publica foi coletada na web.';
+    } else if (manualRequired && bestPages.length > 0) {
+      error = 'Algumas fontes exigem acao manual, mas resultados web publicos foram coletados.';
+    }
+
+    return {
+      search,
+      birthWindow,
+      ok: false,
+      pageState: diagnostics.captchaDetected
+        ? 'blocked_or_captcha'
+        : (diagnostics.providerCooldown ? 'provider_cooldown' : (manualRequired ? 'manual_required_no_web_results' : 'no_collected_text')),
+      searchUrl: manualSearchUrl || firstSearchUrl,
+      error,
+      rawText: '',
+      recordLinks: [],
+      aiAnalysis: null,
+      webResults,
+      manualRequired,
+      manualSources,
+      captchaDetected: diagnostics.captchaDetected,
+      providerCooldown: diagnostics.providerCooldown,
+      diagnostics
+    };
+  }
 
   const aiAnalysis = await analyzeGenealogyText({
     searchedPerson: search,
@@ -93,23 +224,18 @@ async function runSearchPipeline(browser, search) {
     ok: true,
     pageState: manualRequired ? 'manual_required' : 'results_found',
     searchUrl: manualSearchUrl || firstSearchUrl,
-    error: manualRequired ? 'Algumas fontes exigem acao manual, mas outros resultados foram coletados.' : undefined,
+    error: manualRequired
+      ? 'Algumas fontes exigem acao manual, mas resultados web publicos foram coletados.'
+      : undefined,
     rawText: aggregatedText,
     recordLinks,
     aiAnalysis: scoredAi,
-    webResults: bestPages.map((entry) => ({
-      query: entry.query.query,
-      title: entry.item.title,
-      url: entry.item.url,
-      snippet: entry.item.snippet,
-      sourceType: entry.sourceType,
-      objectiveScore: entry.scoredPage.objectiveScore,
-      confidenceHint: entry.scoredPage.confidenceHint,
-      pageState: entry.pageData.pageState,
-      error: entry.pageData.error
-    })),
+    webResults,
     manualRequired,
-    manualSources
+    manualSources,
+    captchaDetected: diagnostics.captchaDetected,
+    providerCooldown: diagnostics.providerCooldown,
+    diagnostics
   };
 }
 

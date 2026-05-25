@@ -16,8 +16,8 @@ function boolFromEnv(name, fallback) {
   return ['1', 'true', 'yes', 'sim'].includes(value.toLowerCase());
 }
 
-function listFromEnv(name) {
-  return (process.env[name] || '')
+function listFromEnv(name, fallback = '') {
+  return (process.env[name] || fallback)
     .split(',')
     .map((item) => item.trim())
     .filter(Boolean);
@@ -54,14 +54,18 @@ module.exports = {
     : 'manual',
   webSearch: {
     provider: (process.env.WEB_SEARCH_PROVIDER || 'duckduckgo').toLowerCase(),
-    limit: numberFromEnv('WEB_SEARCH_LIMIT', 10),
-    maxQueries: numberFromEnv('WEB_SEARCH_MAX_QUERIES', 30),
-    collectMaxPages: numberFromEnv('WEB_COLLECT_MAX_PAGES', 20),
+    fallbackProviders: listFromEnv('WEB_SEARCH_FALLBACK_PROVIDERS', 'bing,google').map((provider) => provider.toLowerCase()),
+    limit: numberFromEnv('WEB_SEARCH_LIMIT', 3),
+    maxQueries: numberFromEnv('WEB_SEARCH_MAX_QUERIES', 2),
+    collectMaxPages: numberFromEnv('WEB_COLLECT_MAX_PAGES', 3),
     queueMaxDepth: numberFromEnv('WEB_QUEUE_MAX_DEPTH', 1),
-    delayMinMs: numberFromEnv('WEB_SEARCH_DELAY_MIN_MS', 3000),
-    delayMaxMs: numberFromEnv('WEB_SEARCH_DELAY_MAX_MS', 9000),
-    collectDelayMinMs: numberFromEnv('WEB_COLLECT_DELAY_MIN_MS', 3000),
-    collectDelayMaxMs: numberFromEnv('WEB_COLLECT_DELAY_MAX_MS', 10000)
+    delayMinMs: numberFromEnv('WEB_SEARCH_DELAY_MIN_MS', 30000),
+    delayMaxMs: numberFromEnv('WEB_SEARCH_DELAY_MAX_MS', 90000),
+    collectDelayMinMs: numberFromEnv('WEB_COLLECT_DELAY_MIN_MS', 20000),
+    collectDelayMaxMs: numberFromEnv('WEB_COLLECT_DELAY_MAX_MS', 60000),
+    stopOnCaptcha: boolFromEnv('WEB_STOP_ON_CAPTCHA', true),
+    maxPeoplePerRun: numberFromEnv('WEB_MAX_PEOPLE_PER_RUN', 3),
+    cooldownAfterCaptchaMinutes: numberFromEnv('WEB_COOLDOWN_AFTER_CAPTCHA_MINUTES', 60)
   },
   credentials: {
     familysearch: {

@@ -52,6 +52,38 @@ function renderManualSources(sources = []) {
     </li>`).join('')}</ul>`;
 }
 
+function renderDiagnostics(diagnostics) {
+  if (!diagnostics) return '<p class="muted">Diagnostico nao disponivel.</p>';
+  return `
+    <dl>
+      <dt>queriesGenerated</dt><dd>${escapeHtml(diagnostics.queriesGenerated ?? 0)}</dd>
+      <dt>queriesTried</dt><dd>${escapeHtml((diagnostics.queriesTried || []).length)}</dd>
+      <dt>searchResultsFound</dt><dd>${escapeHtml(diagnostics.searchResultsFound ?? 0)}</dd>
+      <dt>urlsVisited</dt><dd>${escapeHtml(diagnostics.urlsVisited ?? 0)}</dd>
+      <dt>pagesCollected</dt><dd>${escapeHtml(diagnostics.pagesCollected ?? 0)}</dd>
+      <dt>pagesSkipped</dt><dd>${escapeHtml(diagnostics.pagesSkipped ?? 0)}</dd>
+      <dt>captchaDetected</dt><dd>${escapeHtml(Boolean(diagnostics.captchaDetected))}</dd>
+    </dl>
+    ${diagnostics.providerCooldown ? `<p class="error">Cooldown do provedor: ${escapeHtml(JSON.stringify(diagnostics.providerCooldown))}</p>` : ''}
+    <details>
+      <summary>Queries tentadas</summary>
+      <pre>${escapeHtml(JSON.stringify(diagnostics.queriesTried || [], null, 2))}</pre>
+    </details>
+    <details>
+      <summary>Buscas tentadas</summary>
+      <pre>${escapeHtml(JSON.stringify(diagnostics.searchesTried || [], null, 2))}</pre>
+    </details>
+    <details>
+      <summary>Erros de busca</summary>
+      <pre>${escapeHtml(JSON.stringify(diagnostics.searchErrors || [], null, 2))}</pre>
+    </details>
+    <details>
+      <summary>Erros de coleta</summary>
+      <pre>${escapeHtml(JSON.stringify(diagnostics.collectErrors || [], null, 2))}</pre>
+    </details>
+  `;
+}
+
 function renderRelationships(relationships = []) {
   if (relationships.length === 0) return '<p class="muted">Sem relacoes familiares detectadas.</p>';
   return `<ul>${relationships.map((relation) => `
@@ -98,6 +130,9 @@ function renderSuggestions(suggestions = []) {
 function renderResult(result) {
   const name = [result.search.givenName, result.search.surname].filter(Boolean).join(' ') || result.search.surname || result.search.id;
   const confidence = confidenceOf(result);
+  const captchaProvider = result.diagnostics?.providerCooldown?.provider
+    || result.diagnostics?.searchErrors?.find((item) => item.captchaDetected)?.provider
+    || 'web';
   return `
     <section class="result ${escapeHtml(confidence)}">
       <header>
@@ -116,14 +151,23 @@ function renderResult(result) {
         </p>
       </header>
       ${result.error ? `<p class="error">Erro no scraping: ${escapeHtml(result.error)}</p>` : ''}
+      ${result.diagnostics?.captchaDetected
+        ? `<p class="error">Captcha detectado no provedor ${escapeHtml(captchaProvider)}. A execucao foi interrompida para evitar insistencia.</p>`
+        : ''}
       <h3>Hipoteses</h3>
-      ${renderMatches(result.aiAnalysis?.matches)}
+      ${result.aiAnalysis === null
+        ? '<p class="muted">Nenhuma analise por IA foi executada porque nenhum texto publico foi coletado.</p>'
+        : renderMatches(result.aiAnalysis?.matches)}
       <h3>Proximas buscas sugeridas</h3>
-      ${renderSuggestions(result.aiAnalysis?.nextSearchSuggestions)}
+      ${result.aiAnalysis === null
+        ? '<p class="muted">Sem proximas buscas sugeridas porque a IA nao foi executada.</p>'
+        : renderSuggestions(result.aiAnalysis?.nextSearchSuggestions)}
       <h3>Resultados web encontrados</h3>
       ${renderWebResults(result.webResults)}
       <h3>Fontes que exigem acao manual</h3>
       ${renderManualSources(result.manualSources)}
+      <h3>Diagnostico</h3>
+      ${renderDiagnostics(result.diagnostics)}
       <h3>Links extraidos</h3>
       ${renderLinks(result.recordLinks)}
       <details>
@@ -164,6 +208,8 @@ async function writeHtmlReport(results) {
     .match.medium, .result.medium { border-color: #b45309; }
     .match.low, .result.low { border-color: #b91c1c; }
     .evidence { color: #334155; }
+    dt { font-weight: 700; float: left; clear: left; min-width: 190px; }
+    dd { margin: 6px 0 6px 200px; }
     li { margin: 8px 0; }
   </style>
 </head>

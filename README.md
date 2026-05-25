@@ -142,6 +142,13 @@ npm run search:web:pdf
 npm run search:web:all
 ```
 
+Para rodadas conservadoras a partir dos PDFs:
+
+```bash
+npm run search:web:pdf:tiny
+npm run search:web:pdf:small
+```
+
 ### Como funciona
 
 - `npm run queries:web` usa apenas `data/input.json`.
@@ -150,6 +157,23 @@ npm run search:web:all
 - O bot gera consultas inteligentes, consulta mecanismos de busca publicos, coleta paginas HTML publicas, classifica fontes e analisa com IA.
 - FamilySearch continua manual; links `familysearch.org` encontrados via web sao marcados como `manual_required`.
 - Sites bloqueados ou que exigem login sao marcados como `manual_required` sem tentativas de bypass.
+
+### Como evitar captcha em buscadores
+
+O motor web e conservador por padrao: poucas queries, poucos resultados, poucos perfis por execucao e pausas longas entre acessos. Mesmo assim, buscadores publicos podem bloquear automacao. O bot nao contorna captcha, nao usa proxy, nao troca IP e nao tenta resolver desafio.
+
+Quando houver risco de bloqueio:
+
+- rode primeiro `npm run queries:web:pdf`; esse modo apenas gera consultas e nao abre navegador;
+- teste com `npm run search:web:pdf:tiny` antes de uma rodada maior;
+- use `npm run search:web:pdf:small` somente se a rodada tiny estiver saudavel;
+- mantenha `WEB_SEARCH_MAX_QUERIES`, `WEB_COLLECT_MAX_PAGES` e `WEB_MAX_PEOPLE_PER_RUN` baixos;
+- aumente `WEB_SEARCH_DELAY_MIN_MS`, `WEB_SEARCH_DELAY_MAX_MS`, `WEB_COLLECT_DELAY_MIN_MS` e `WEB_COLLECT_DELAY_MAX_MS` se aparecer bloqueio;
+- se um provedor mostrar captcha, aguarde o cooldown em `output/search-cooldown.json`;
+- para fontes sensiveis ou com login, prefira o fluxo manual e depois `npm run analyze:manual`;
+- no futuro, prefira APIs oficiais de busca quando disponiveis.
+
+Se captcha ou bloqueio for detectado, o provedor entra em cooldown, o estado e salvo em `output/search-cooldown.json`, o relatorio registra o diagnostico e a rodada e interrompida quando `WEB_STOP_ON_CAPTCHA=true`.
 ## Entrada manual
 
 Edite `data/input.json`:
