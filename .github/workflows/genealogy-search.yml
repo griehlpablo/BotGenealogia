@@ -13,7 +13,7 @@ jobs:
     env:
       HEADLESS: "true"
       FAMILYSEARCH_MODE: "manual"
-      PUPPETEER_EXTRA_ARGS: "--no-sandbox,--disable-setuid-sandbox"
+      PUPPETEER_EXTRA_ARGS: "--no-sandbox,--disable-setuid-sandbox,--disable-dev-shm-usage"
 
       AI_PROVIDER: ${{ secrets.AI_PROVIDER }}
       GEMINI_API_KEY: ${{ secrets.AIzaSyCgRu3vGDRiZX_TjGfyJGewPU5RxLo3Bs0Y }}

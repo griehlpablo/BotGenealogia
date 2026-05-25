@@ -72,15 +72,23 @@ function resolveExecutablePath() {
 
 async function createBrowser() {
   const executablePath = resolveExecutablePath();
+  const ciBrowserArgs = (process.env.CI || process.env.GITHUB_ACTIONS)
+    ? ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+    : [];
+  const browserArgs = [...new Set([
+    '--window-size=1366,900',
+    ...ciBrowserArgs,
+    ...config.browser.extraArgs
+  ])];
+  const isCi = Boolean(process.env.CI || process.env.GITHUB_ACTIONS);
+  console.log(`[browser] headless=${config.browser.headless} ci=${isCi} args=${browserArgs.join(' ')}`);
+
   const launchOptions = {
     headless: config.browser.headless,
     slowMo: config.browser.slowMo,
     executablePath,
     defaultViewport: { width: 1366, height: 900 },
-    args: [
-      '--window-size=1366,900',
-      ...config.browser.extraArgs
-    ]
+    args: browserArgs
   };
 
   if (config.browser.userDataDir) {
