@@ -21,10 +21,11 @@
     "search:web:pdf:small": "set WEB_SEARCH_MAX_QUERIES=2&& set WEB_COLLECT_MAX_PAGES=3&& set WEB_MAX_PEOPLE_PER_RUN=3&& node scripts/search-web.js --source=pdf",
     "search:web:all": "node scripts/search-web.js --source=all",
     "test:web-query": "node scripts/test-web-query.js",
+    "test:web-query:maria": "node scripts/test-web-query-maria.js",
     "test:web-provider": "node scripts/test-web-provider.js",
     "test:web-collector": "node scripts/test-web-collector.js",
     "analyze:manual": "node scripts/analyze-manual.js",
-    "doctor": "node -e \"require('./src/logic'); require('./src/ai'); require('./src/scraper'); require('./src/queryGenerator'); require('./src/webSearch'); require('./src/webCollector'); require('./src/sourceClassifier'); require('./src/cooldown'); require('./src/siteExtractors/google'); require('./src/siteExtractors/bing'); require('./src/siteExtractors/duckduckgo'); console.log('OK')\""
+    "doctor": "node -e \"require('./src/logic'); require('./src/ai'); require('./src/scraper'); require('./src/queryGenerator'); require('./src/webSearch'); require('./src/webCollector'); require('./src/sourceClassifier'); require('./src/cooldown'); require('./src/preCollectScoring'); require('./src/siteExtractors/google'); require('./src/siteExtractors/bing'); require('./src/siteExtractors/duckduckgo'); console.log('OK')\""
   },
   "keywords": [
     "genealogy",

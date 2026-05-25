@@ -71,7 +71,11 @@ async function main() {
     const queries = generateQueries(search);
     const label = [search.givenName, search.surname].filter(Boolean).join(' ') || search.id || 'sem-nome';
     for (const query of queries) {
-      lines.push(`[${source}] [${query.priority}] [${query.purpose}] ${query.query}`);
+      if (query.skipWeb) {
+        lines.push(`[${source}] [${query.priority}] [${query.purpose}] SKIP ${label}: ${query.reason}`);
+      } else {
+        lines.push(`[${source}] [${query.priority}] [${query.purpose}] ${query.query}`);
+      }
     }
   }
 

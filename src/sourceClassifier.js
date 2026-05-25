@@ -7,6 +7,7 @@ function classifyUrl(url, snippet = '', title = '') {
   if (lowerUrl.includes('geneanet.org')) return 'geneanet';
   if (lowerUrl.includes('findagrave.com')) return 'findagrave';
   if (lowerUrl.includes('billiongraves.com')) return 'billiongraves';
+  if (lowerUrl.includes('wikipedia.org') || lowerUrl.includes('wikidata.org')) return 'encyclopedia';
   if (lowerUrl.includes('/cemeter') || lowerText.includes('cemitério') || lowerText.includes('cemetery')) return 'cemetery';
   if (lowerText.includes('obitu') || lowerUrl.includes('obituaries') || lowerUrl.includes('obituary')) return 'newspaper';
   if (lowerText.includes('registro civil') || lowerUrl.includes('registro-civil') || lowerUrl.includes('civilregister')) return 'civil_registry';

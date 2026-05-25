@@ -4,6 +4,7 @@ const { searchWeb } = require('./webSearch');
 const { classifyUrl } = require('./sourceClassifier');
 const { collectPublicPage } = require('./webCollector');
 const { scoreWebResult } = require('./evidenceScoring');
+const { scorePreCollectResult } = require('./preCollectScoring');
 const { analyzeGenealogyText } = require('./ai');
 const { buildSearchUrl } = require('./scraper');
 const { scoreAnalysis } = require('./scoring');
@@ -13,6 +14,7 @@ async function runSearchPipeline(browser, search) {
   const birthWindow = deduceBirthWindow(search);
   const queries = generateQueries(search).slice(0, config.webSearch.maxQueries || 30);
   const collected = [];
+  const webResultRecords = [];
   const manualSources = [];
   const visitedUrls = new Set();
   const diagnostics = {
@@ -23,6 +25,11 @@ async function runSearchPipeline(browser, search) {
     urlsVisited: 0,
     pagesCollected: 0,
     pagesSkipped: 0,
+    queriesSkipped: 0,
+    skippedReasons: [],
+    urlsSkippedBeforeCollect: 0,
+    excludedDomainsSkipped: 0,
+    lowRelevanceSkipped: 0,
     captchaDetected: false,
     providerCooldown: null,
     searchErrors: [],
@@ -56,6 +63,23 @@ async function runSearchPipeline(browser, search) {
 
   for (const query of queries) {
     if (collected.length >= config.webSearch.collectMaxPages) break;
+    if (query.skipWeb) {
+      diagnostics.queriesSkipped += 1;
+      diagnostics.skippedReasons.push({ type: 'generic_query', query: query.query, reason: query.reason });
+      webResultRecords.push({
+        query: query.query,
+        title: '',
+        url: '',
+        snippet: '',
+        sourceType: 'skipped',
+        pageState: 'query_skipped',
+        collected: false,
+        skipReason: query.reason || 'generic_query'
+      });
+      console.warn(`[searchEngine] Query pulada: ${query.reason || 'generic_query'}`);
+      continue;
+    }
+
     console.log(`[searchEngine] Query: ${query.query}`);
     diagnostics.queriesTried.push(query.query);
     const searchResult = await searchWeb(browser, query);
@@ -117,10 +141,71 @@ async function runSearchPipeline(browser, search) {
       diagnostics.urlsVisited += 1;
 
       const sourceType = classifyUrl(item.url, item.snippet, item.title);
+      const sourceDomain = safeHostname(item.url);
       if (sourceType === 'familysearch') {
         manualRequired = true;
         manualSources.push({ url: item.url, title: item.title, sourceType, query: query.query });
         diagnostics.pagesSkipped += 1;
+        diagnostics.urlsSkippedBeforeCollect += 1;
+        diagnostics.skippedReasons.push({ type: 'manual_required', url: item.url, domain: sourceDomain });
+        webResultRecords.push({
+          query: query.query,
+          title: item.title,
+          url: item.url,
+          snippet: item.snippet,
+          sourceType,
+          pageState: 'manual_required',
+          collected: false,
+          skipReason: 'manual_required'
+        });
+        continue;
+      }
+
+      const excludedDomain = isExcludedDomain(sourceDomain);
+      const preCollect = scorePreCollectResult(item, search, birthWindow, sourceType);
+
+      if (excludedDomain || (sourceType === 'encyclopedia' && !config.webSearch.allowEncyclopedia)) {
+        diagnostics.pagesSkipped += 1;
+        diagnostics.urlsSkippedBeforeCollect += 1;
+        diagnostics.excludedDomainsSkipped += 1;
+        const skipReason = excludedDomain ? 'excluded_domain' : 'encyclopedia_not_allowed';
+        diagnostics.skippedReasons.push({ type: skipReason, url: item.url, domain: sourceDomain });
+        webResultRecords.push({
+          query: query.query,
+          title: item.title,
+          url: item.url,
+          snippet: item.snippet,
+          sourceType,
+          preScore: preCollect.preScore,
+          preScoreReasons: preCollect.reasons,
+          preScorePenalties: preCollect.penalties,
+          pageState: 'skipped_before_collect',
+          collected: false,
+          skipReason
+        });
+        console.warn(`[searchEngine] Pulando ${item.url}: ${skipReason}`);
+        continue;
+      }
+
+      if (preCollect.preScore < config.webSearch.preCollectMinScore) {
+        diagnostics.pagesSkipped += 1;
+        diagnostics.urlsSkippedBeforeCollect += 1;
+        diagnostics.lowRelevanceSkipped += 1;
+        diagnostics.skippedReasons.push({ type: 'low_precollect_score', url: item.url, preScore: preCollect.preScore, penalties: preCollect.penalties });
+        webResultRecords.push({
+          query: query.query,
+          title: item.title,
+          url: item.url,
+          snippet: item.snippet,
+          sourceType,
+          preScore: preCollect.preScore,
+          preScoreReasons: preCollect.reasons,
+          preScorePenalties: preCollect.penalties,
+          pageState: 'skipped_before_collect',
+          collected: false,
+          skipReason: 'low_precollect_score'
+        });
+        console.warn(`[searchEngine] Pulando ${item.url}: preScore ${preCollect.preScore} abaixo de ${config.webSearch.preCollectMinScore}`);
         continue;
       }
 
@@ -150,7 +235,7 @@ async function runSearchPipeline(browser, search) {
       }
 
       const scoredPage = scoreWebResult(pageData, search, birthWindow, sourceType);
-      collected.push({ query, item, pageData, sourceType, scoredPage });
+      collected.push({ query, item, pageData, sourceType, scoredPage, preCollect });
       diagnostics.pagesCollected += 1;
     }
   }
@@ -160,7 +245,12 @@ async function runSearchPipeline(browser, search) {
     .slice(0, config.webSearch.collectMaxPages || 20);
 
   const aggregatedText = bestPages.map((entry) => entry.pageData.rawText).join('\n\n').slice(0, 14000);
-  const recordLinks = [...new Set(bestPages.flatMap((entry) => entry.pageData.links.map((link) => link.href)))].slice(0, 50);
+  const recordLinks = [...new Set(bestPages.flatMap((entry) => entry.pageData.links.map((link) => link.href)))]
+    .filter((href) => {
+      const value = String(href || '').trim();
+      return value && value !== '#' && !value.toLowerCase().startsWith('javascript:');
+    })
+    .slice(0, 50);
 
   const webResults = bestPages.map((entry) => ({
     query: entry.query.query,
@@ -171,8 +261,14 @@ async function runSearchPipeline(browser, search) {
     objectiveScore: entry.scoredPage.objectiveScore,
     confidenceHint: entry.scoredPage.confidenceHint,
     pageState: entry.pageData.pageState,
-    error: entry.pageData.error
+    error: entry.pageData.error,
+    preScore: entry.preCollect?.preScore,
+    preScoreReasons: entry.preCollect?.reasons || [],
+    preScorePenalties: entry.preCollect?.penalties || [],
+    collected: true,
+    skipReason: ''
   }));
+  webResultRecords.push(...webResults);
 
   if (!aggregatedText.trim()) {
     let error = 'Nenhuma pagina publica relevante foi coletada para analise.';
@@ -198,7 +294,7 @@ async function runSearchPipeline(browser, search) {
       rawText: '',
       recordLinks: [],
       aiAnalysis: null,
-      webResults,
+      webResults: webResultRecords,
       manualRequired,
       manualSources,
       captchaDetected: diagnostics.captchaDetected,
@@ -230,13 +326,29 @@ async function runSearchPipeline(browser, search) {
     rawText: aggregatedText,
     recordLinks,
     aiAnalysis: scoredAi,
-    webResults,
+    webResults: webResultRecords,
     manualRequired,
     manualSources,
     captchaDetected: diagnostics.captchaDetected,
     providerCooldown: diagnostics.providerCooldown,
     diagnostics
   };
+}
+
+function safeHostname(url) {
+  try {
+    return new URL(url).hostname.toLowerCase().replace(/^www\./, '');
+  } catch (error) {
+    return '';
+  }
+}
+
+function isExcludedDomain(hostname) {
+  if (!hostname) return false;
+  return (config.webSearch.excludedDomains || []).some((domain) => {
+    const normalized = String(domain || '').toLowerCase().replace(/^www\./, '');
+    return hostname === normalized || hostname.endsWith(`.${normalized}`);
+  });
 }
 
 module.exports = {

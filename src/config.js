@@ -55,6 +55,9 @@ module.exports = {
   webSearch: {
     provider: (process.env.WEB_SEARCH_PROVIDER || 'duckduckgo').toLowerCase(),
     fallbackProviders: listFromEnv('WEB_SEARCH_FALLBACK_PROVIDERS', 'bing,google').map((provider) => provider.toLowerCase()),
+    excludedDomains: listFromEnv('WEB_EXCLUDED_DOMAINS', 'wikipedia.org,wikidata.org,facebook.com,instagram.com,youtube.com').map((domain) => domain.toLowerCase()),
+    allowEncyclopedia: boolFromEnv('ALLOW_ENCYCLOPEDIA', false),
+    preCollectMinScore: numberFromEnv('WEB_PRECOLLECT_MIN_SCORE', 25),
     limit: numberFromEnv('WEB_SEARCH_LIMIT', 3),
     maxQueries: numberFromEnv('WEB_SEARCH_MAX_QUERIES', 2),
     collectMaxPages: numberFromEnv('WEB_COLLECT_MAX_PAGES', 3),

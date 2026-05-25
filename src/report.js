@@ -27,9 +27,17 @@ function summarize(results) {
 }
 
 function renderLinks(links = []) {
-  if (links.length === 0) return '<p class="muted">Nenhum link extraido automaticamente.</p>';
-  return `<ul>${links
-    .map((link) => `<li><a href="${escapeHtml(link.href)}" target="_blank" rel="noreferrer">${escapeHtml(link.text)}</a></li>`)
+  const normalizedLinks = links.map((link) => {
+    if (typeof link === 'string') return { href: link, text: link };
+    return { href: link?.href || '', text: link?.text || link?.href || '' };
+  });
+  const validLinks = normalizedLinks.filter((link) => {
+    const href = String(link.href || '').trim();
+    return href && href !== '#' && !href.toLowerCase().startsWith('javascript:');
+  });
+  if (validLinks.length === 0) return '<p class="muted">Nenhum link extraido automaticamente.</p>';
+  return `<ul>${validLinks
+    .map((link) => `<li><a href="${escapeHtml(link.href)}" target="_blank" rel="noreferrer">${escapeHtml(link.text || link.href)}</a></li>`)
     .join('')}</ul>`;
 }
 
@@ -37,9 +45,12 @@ function renderWebResults(results = []) {
   if (results.length === 0) return '<p class="muted">Nenhum resultado web coletado.</p>';
   return `<ul>${results.map((result) => `
     <li>
-      <a href="${escapeHtml(result.url)}" target="_blank" rel="noreferrer">${escapeHtml(result.title || result.url)}</a>
-      <br><small>${escapeHtml(result.sourceType)} | score objetivo: ${escapeHtml(result.objectiveScore)} | ${escapeHtml(result.pageState || 'ok')}</small>
+      ${result.url
+        ? `<a href="${escapeHtml(result.url)}" target="_blank" rel="noreferrer">${escapeHtml(result.title || result.url)}</a>`
+        : `<strong>${escapeHtml(result.title || result.query || 'Resultado pulado')}</strong>`}
+      <br><small>${escapeHtml(result.sourceType)} | score objetivo: ${escapeHtml(result.objectiveScore ?? '')} | preScore: ${escapeHtml(result.preScore ?? '')} | ${escapeHtml(result.pageState || 'ok')} | ${result.collected === false ? `pulado: ${escapeHtml(result.skipReason || '')}` : 'coletado'}</small>
       ${result.snippet ? `<p>${escapeHtml(result.snippet)}</p>` : ''}
+      ${result.preScorePenalties?.length ? `<p class="muted">Penalidades: ${escapeHtml(result.preScorePenalties.join(' | '))}</p>` : ''}
     </li>`).join('')}</ul>`;
 }
 
@@ -62,12 +73,20 @@ function renderDiagnostics(diagnostics) {
       <dt>urlsVisited</dt><dd>${escapeHtml(diagnostics.urlsVisited ?? 0)}</dd>
       <dt>pagesCollected</dt><dd>${escapeHtml(diagnostics.pagesCollected ?? 0)}</dd>
       <dt>pagesSkipped</dt><dd>${escapeHtml(diagnostics.pagesSkipped ?? 0)}</dd>
+      <dt>queriesSkipped</dt><dd>${escapeHtml(diagnostics.queriesSkipped ?? 0)}</dd>
+      <dt>urlsSkippedBeforeCollect</dt><dd>${escapeHtml(diagnostics.urlsSkippedBeforeCollect ?? 0)}</dd>
+      <dt>excludedDomainsSkipped</dt><dd>${escapeHtml(diagnostics.excludedDomainsSkipped ?? 0)}</dd>
+      <dt>lowRelevanceSkipped</dt><dd>${escapeHtml(diagnostics.lowRelevanceSkipped ?? 0)}</dd>
       <dt>captchaDetected</dt><dd>${escapeHtml(Boolean(diagnostics.captchaDetected))}</dd>
     </dl>
     ${diagnostics.providerCooldown ? `<p class="error">Cooldown do provedor: ${escapeHtml(JSON.stringify(diagnostics.providerCooldown))}</p>` : ''}
     <details>
       <summary>Queries tentadas</summary>
       <pre>${escapeHtml(JSON.stringify(diagnostics.queriesTried || [], null, 2))}</pre>
+    </details>
+    <details>
+      <summary>Motivos de pulo</summary>
+      <pre>${escapeHtml(JSON.stringify(diagnostics.skippedReasons || [], null, 2))}</pre>
     </details>
     <details>
       <summary>Buscas tentadas</summary>
@@ -120,8 +139,12 @@ function renderMatches(matches = []) {
 }
 
 function renderSuggestions(suggestions = []) {
-  if (suggestions.length === 0) return '<p class="muted">Sem proximas buscas sugeridas.</p>';
-  return `<ul>${suggestions.map((suggestion) => {
+  const validSuggestions = suggestions.filter((suggestion) => {
+    const name = [suggestion.givenName, suggestion.surname].filter(Boolean).join(' ');
+    return Boolean(name || suggestion.place || suggestion.reason);
+  });
+  if (validSuggestions.length === 0) return '<p class="muted">Sem proximas buscas sugeridas.</p>';
+  return `<ul>${validSuggestions.map((suggestion) => {
     const name = [suggestion.givenName, suggestion.surname].filter(Boolean).join(' ');
     return `<li>${escapeHtml(name || suggestion.surname || 'Busca sem nome')} - ${escapeHtml(suggestion.place || '')} ${escapeHtml(suggestion.reason || '')}</li>`;
   }).join('')}</ul>`;

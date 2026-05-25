@@ -24,8 +24,56 @@ const SEARCH_TERMS = [
   'myheritage'
 ];
 
+const COMMON_GIVEN_NAMES = new Set([
+  'maria',
+  'jose',
+  'josÃ©',
+  'joao',
+  'joÃ£o',
+  'anna',
+  'ana',
+  'pedro',
+  'mads',
+  'hans',
+  'else',
+  'mrs'
+]);
+
+const BROAD_PLACES = new Set([
+  'brasil',
+  'brazil',
+  'dinamarca',
+  'denmark',
+  'italia',
+  'itÃ¡lia',
+  'italy',
+  'portugal',
+  'espanha',
+  'spain',
+  'alemanha',
+  'germany',
+  'franca',
+  'franÃ§a',
+  'france',
+  'argentina',
+  'uruguay',
+  'paraguay',
+  'poland',
+  'polonia',
+  'polÃ´nia'
+]);
+
 function normalizeText(value) {
   return String(value || '').trim();
+}
+
+function normalizeForMatch(value) {
+  return normalizeText(value).toLowerCase();
+}
+
+function quote(value) {
+  const text = normalizeText(value);
+  return text ? `"${text}"` : '';
 }
 
 function buildBaseName(search) {
@@ -66,8 +114,58 @@ function buildNameVariants(search) {
   if (search.spouse) {
     variants.add(`${given} ${family} ${normalizeText(search.spouse)}`.trim());
   }
+  for (const child of normalizePeopleList(search.children)) {
+    variants.add(`${given} ${family} ${child}`.trim());
+  }
 
   return Array.from(variants).filter(Boolean);
+}
+
+function normalizePeopleList(value) {
+  if (!value) return [];
+  const list = Array.isArray(value) ? value : [value];
+  return list
+    .map((item) => {
+      if (typeof item === 'string') return normalizeText(item);
+      if (item && typeof item === 'object') {
+        return [item.givenName, item.surname, item.name].filter(Boolean).join(' ').trim();
+      }
+      return '';
+    })
+    .filter(Boolean);
+}
+
+function extractNamesFromReason(reason) {
+  const text = normalizeText(reason);
+  if (!text) return [];
+  const names = [];
+  const matches = text.match(/\b\p{Lu}\p{Ll}+(?:\s+\p{Lu}\p{Ll}+)+/gu) || [];
+  for (const match of matches) {
+    const cleaned = match.replace(/^(Mae|MÃ£e|Pai|Filho|Filha|Conjuge|CÃ´njuge)\s+de\s+/i, '').trim();
+    if (cleaned) names.push(cleaned);
+  }
+  return [...new Set(names)];
+}
+
+function buildContext(search) {
+  const relatives = [
+    normalizeText(search.father),
+    normalizeText(search.mother),
+    normalizeText(search.spouse),
+    ...normalizePeopleList(search.children),
+    ...extractNamesFromReason(search.reason)
+  ].filter(Boolean);
+
+  const surnames = new Set();
+  for (const relative of relatives) {
+    const pieces = relative.split(/\s+/).filter(Boolean);
+    if (pieces.length > 1) surnames.add(pieces[pieces.length - 1]);
+  }
+
+  return {
+    relatives: [...new Set(relatives)],
+    relativeSurnames: [...surnames]
+  };
 }
 
 function addUnique(arr, item) {
@@ -84,6 +182,64 @@ function buildQueryTemplate(base, fragments, priority, purpose, targetSites, per
   };
 }
 
+function usefulTokens(query) {
+  return normalizeForMatch(query)
+    .replace(/["']/g, ' ')
+    .split(/[^a-zÃ -Ã¿0-9]+/i)
+    .filter((token) => token.length > 1);
+}
+
+function hasParentContext(search, query = '') {
+  const text = normalizeForMatch(query);
+  const context = buildContext(search);
+  if (context.relatives.length > 0) return true;
+  if (search.reason && text && usefulTokens(search.reason).some((token) => text.includes(token))) return true;
+  if (Array.isArray(search.childrenBirthYears) && search.childrenBirthYears.length > 0) return true;
+  return false;
+}
+
+function isBroadPlace(place) {
+  const normalized = normalizeForMatch(place);
+  if (!normalized) return false;
+  if (BROAD_PLACES.has(normalized)) return true;
+  return !/[,\-]/.test(place) && normalized.split(/\s+/).length <= 2;
+}
+
+function isQueryTooGeneric(queryObject, search = {}) {
+  const query = normalizeText(queryObject?.query || queryObject);
+  const reasons = [];
+  const tokens = usefulTokens(query);
+  const given = normalizeForMatch(search.givenName);
+  const surname = normalizeText(search.surname);
+  const place = normalizeText(search.place);
+  const lowerQuery = normalizeForMatch(query);
+  const commonGiven = COMMON_GIVEN_NAMES.has(given);
+  const hasSurname = Boolean(surname) && lowerQuery.includes(normalizeForMatch(surname));
+  const context = buildContext(search);
+  const hasRelative = context.relatives.some((relative) => lowerQuery.includes(normalizeForMatch(relative)))
+    || context.relativeSurnames.some((relativeSurname) => lowerQuery.includes(normalizeForMatch(relativeSurname)));
+  const hasYear = /\b(1[4-9]\d{2}|20\d{2})\b/.test(query);
+  const hasCityLikePlace = Boolean(place) && !isBroadPlace(place);
+  const onlyGivenAndCountry = given
+    && place
+    && isBroadPlace(place)
+    && tokens.length <= 2
+    && tokens.includes(given)
+    && tokens.includes(normalizeForMatch(place));
+
+  if (tokens.length < 3) reasons.push('Query tem menos de 3 tokens uteis.');
+  if (commonGiven && !hasSurname && !hasRelative) reasons.push('Nome comum sem sobrenome ou parente.');
+  if (onlyGivenAndCountry) reasons.push('Query contem apenas nome proprio e pais.');
+  if (!hasYear && !hasSurname && !hasRelative && !hasCityLikePlace) {
+    reasons.push('Query sem ano, sobrenome, parente ou cidade.');
+  }
+
+  return {
+    tooGeneric: reasons.length > 0,
+    reasons
+  };
+}
+
 function generateQueries(search = {}) {
   const givenName = normalizeText(search.givenName);
   const surname = normalizeText(search.surname);
@@ -92,6 +248,7 @@ function generateQueries(search = {}) {
   const deathYear = search.deathYear;
   const coreName = buildBaseName(search);
   const variants = buildNameVariants(search);
+  const context = buildContext(search);
   const targetSites = ['google', 'bing', 'duckduckgo'];
   const queries = [];
 
@@ -103,10 +260,19 @@ function generateQueries(search = {}) {
   const hasPlace = Boolean(place);
   const hasYear = Boolean(birthYear || deathYear);
   const highConfidence = hasSurname && givenName;
+  const broadPlaceOnly = givenName && !hasSurname && hasPlace && isBroadPlace(place) && !hasParentContext(search);
 
-  const extraTerms = [];
-  if (hasPlace) extraTerms.push(place);
-  if (birthYear) extraTerms.push(String(birthYear));
+  if (broadPlaceOnly) {
+    return [{
+      query: '',
+      purpose: 'skip_generic_query',
+      priority: 99,
+      targetSites,
+      personId: search.id,
+      skipWeb: true,
+      reason: 'Nome muito generico sem sobrenome ou parentes suficientes.'
+    }];
+  }
 
   if (highConfidence) {
     addUnique(queries, buildQueryTemplate(coreName, [place], 1, 'full_name_place', targetSites, search.id));
@@ -121,6 +287,19 @@ function generateQueries(search = {}) {
     addUnique(queries, buildQueryTemplate(coreName, ['registro civil'], 2, 'civil_registry', targetSites, search.id));
     addUnique(queries, buildQueryTemplate(coreName, ['pai', 'mãe'], 2, 'parents', targetSites, search.id));
     if (search.spouse) addUnique(queries, buildQueryTemplate(coreName, ['cônjuge', normalizeText(search.spouse)], 2, 'spouse', targetSites, search.id));
+  }
+
+  if (!hasSurname && givenName && context.relatives.length > 0) {
+    const year = birthYear ? String(birthYear) : '';
+    const firstRelative = context.relatives[0];
+    const firstRelativeSurname = context.relativeSurnames[0];
+    addUnique(queries, buildQueryTemplate(quote(givenName), [quote(firstRelative), quote(place), quote(year)], 1, 'given_relative_place_year', targetSites, search.id));
+    if (context.relatives.length > 1) {
+      addUnique(queries, buildQueryTemplate(quote(givenName), [quote(context.relatives[0]), quote(context.relatives[1]), quote(place)], 1, 'given_multiple_relatives_place', targetSites, search.id));
+    }
+    if (firstRelativeSurname) {
+      addUnique(queries, buildQueryTemplate(quote(givenName), [quote(firstRelativeSurname), quote(place), quote(year)], 2, 'given_relative_surname_place_year', targetSites, search.id));
+    }
   }
 
   for (const variant of variants) {
@@ -142,6 +321,17 @@ function generateQueries(search = {}) {
 
   for (const query of queries) {
     if (!query.query || query.query.length < 5) continue;
+    const genericCheck = isQueryTooGeneric(query, search);
+    if (genericCheck.tooGeneric) {
+      filtered.push({
+        ...query,
+        query: '',
+        originalQuery: query.query,
+        skipWeb: true,
+        reason: genericCheck.reasons.join(' ')
+      });
+      continue;
+    }
     if (seen.has(query.query.toLowerCase())) continue;
     seen.add(query.query.toLowerCase());
     filtered.push(query);
@@ -151,5 +341,6 @@ function generateQueries(search = {}) {
 }
 
 module.exports = {
-  generateQueries
+  generateQueries,
+  isQueryTooGeneric
 };
