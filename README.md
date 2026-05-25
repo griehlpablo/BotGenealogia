@@ -122,7 +122,34 @@ npm run analyze:manual
 8. Verifique o relatorio em `output/`.
 
 O bot nao tenta mascarar fingerprint, proxy, captchas ou outros bloqueios. Ele aceita apenas o modo manual para FamilySearch.
+## Motor de busca web geral
 
+O BotGenealogia agora suporta um fluxo de descoberta web hibrido usando Google/Bing/DuckDuckGo e pagina publicas. O FamilySearch permanece em modo manual quando `FAMILYSEARCH_MODE=manual`.
+
+### Gerar consultas de busca web
+
+```bash
+npm run queries:web
+npm run queries:web:pdf
+npm run queries:web:all
+```
+
+### Executar busca web e analise
+
+```bash
+npm run search:web
+npm run search:web:pdf
+npm run search:web:all
+```
+
+### Como funciona
+
+- `npm run queries:web` usa apenas `data/input.json`.
+- `npm run queries:web:pdf` usa apenas PDFs em `data/pdfs`.
+- `npm run queries:web:all` usa ambas as fontes.
+- O bot gera consultas inteligentes, consulta mecanismos de busca publicos, coleta paginas HTML publicas, classifica fontes e analisa com IA.
+- FamilySearch continua manual; links `familysearch.org` encontrados via web sao marcados como `manual_required`.
+- Sites bloqueados ou que exigem login sao marcados como `manual_required` sem tentativas de bypass.
 ## Entrada manual
 
 Edite `data/input.json`:

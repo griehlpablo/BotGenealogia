@@ -6,6 +6,9 @@ const config = require('./config');
 const { loadCookies, saveCookies } = require('./session');
 const { extractFamilySearchResults } = require('./siteExtractors/familysearch');
 const { extractMyHeritageResults } = require('./siteExtractors/myheritage');
+const { extractGoogleResults } = require('./siteExtractors/google');
+const { extractBingResults } = require('./siteExtractors/bing');
+const { extractDuckDuckGoResults } = require('./siteExtractors/duckduckgo');
 const { extractGenericResults } = require('./siteExtractors/generic');
 
 const SITE_CONFIG = {
@@ -89,8 +92,19 @@ async function createBrowser() {
 
 function siteKeyFor(search) {
   const site = (search.site || 'familysearch').toLowerCase();
-  if (site === 'web') return 'google';
+  if (site === 'web' || site === 'google') return 'google';
+  if (site === 'bing') return 'bing';
+  if (site === 'duckduckgo') return 'duckduckgo';
   return SITE_CONFIG[site] ? site : 'familysearch';
+}
+
+function buildSearchEngineQuery(search) {
+  const pieces = [];
+  if (search.givenName) pieces.push(search.givenName);
+  if (search.surname) pieces.push(search.surname);
+  if (search.place) pieces.push(search.place);
+  if (search.birthYear) pieces.push(String(search.birthYear));
+  return pieces.filter(Boolean).join(' ').trim();
 }
 
 function buildFamilySearchUrl(search, birthWindow) {
@@ -101,6 +115,16 @@ function buildFamilySearchUrl(search, birthWindow) {
   if (birthWindow) params.set('q.birthLikeDate.from', String(birthWindow.from));
   if (birthWindow) params.set('q.birthLikeDate.to', String(birthWindow.to));
   return `${SITE_CONFIG.familysearch.searchUrl}?${params.toString()}`;
+}
+
+function buildBingUrl(search, birthWindow) {
+  const query = buildSearchEngineQuery(search);
+  return `https://www.bing.com/search?q=${encodeURIComponent(query)}`;
+}
+
+function buildDuckDuckGoUrl(search, birthWindow) {
+  const query = buildSearchEngineQuery(search);
+  return `https://duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
 }
 
 function buildMyHeritageUrl(search, birthWindow) {
@@ -138,6 +162,8 @@ function buildSearchUrl(search, birthWindow) {
   const siteKey = siteKeyFor(search);
   if (siteKey === 'myheritage') return buildMyHeritageUrl(search, birthWindow);
   if (siteKey === 'google') return buildGoogleUrl(search, birthWindow);
+  if (siteKey === 'bing') return buildBingUrl(search, birthWindow);
+  if (siteKey === 'duckduckgo') return buildDuckDuckGoUrl(search, birthWindow);
   return buildFamilySearchUrl(search, birthWindow);
 }
 
@@ -338,6 +364,9 @@ async function extractResults(page, siteKey, limit) {
 
   if (siteKey === 'familysearch') return extractFamilySearchResults(page, limit);
   if (siteKey === 'myheritage') return extractMyHeritageResults(page, limit);
+  if (siteKey === 'google') return extractGoogleResults(page, limit);
+  if (siteKey === 'bing') return extractBingResults(page, limit);
+  if (siteKey === 'duckduckgo') return extractDuckDuckGoResults(page, limit);
   return extractGenericResults(page, limit);
 }
 

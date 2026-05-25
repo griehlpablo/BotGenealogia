@@ -33,6 +33,25 @@ function renderLinks(links = []) {
     .join('')}</ul>`;
 }
 
+function renderWebResults(results = []) {
+  if (results.length === 0) return '<p class="muted">Nenhum resultado web coletado.</p>';
+  return `<ul>${results.map((result) => `
+    <li>
+      <a href="${escapeHtml(result.url)}" target="_blank" rel="noreferrer">${escapeHtml(result.title || result.url)}</a>
+      <br><small>${escapeHtml(result.sourceType)} | score objetivo: ${escapeHtml(result.objectiveScore)} | ${escapeHtml(result.pageState || 'ok')}</small>
+      ${result.snippet ? `<p>${escapeHtml(result.snippet)}</p>` : ''}
+    </li>`).join('')}</ul>`;
+}
+
+function renderManualSources(sources = []) {
+  if (sources.length === 0) return '<p class="muted">Nenhuma fonte manual identificada.</p>';
+  return `<ul>${sources.map((source) => `
+    <li>
+      <a href="${escapeHtml(source.url)}" target="_blank" rel="noreferrer">${escapeHtml(source.title || source.url)}</a>
+      <br><small>${escapeHtml(source.sourceType || 'manual')} ${source.reason ? `| ${escapeHtml(source.reason)}` : ''}</small>
+    </li>`).join('')}</ul>`;
+}
+
 function renderRelationships(relationships = []) {
   if (relationships.length === 0) return '<p class="muted">Sem relacoes familiares detectadas.</p>';
   return `<ul>${relationships.map((relation) => `
@@ -101,6 +120,10 @@ function renderResult(result) {
       ${renderMatches(result.aiAnalysis?.matches)}
       <h3>Proximas buscas sugeridas</h3>
       ${renderSuggestions(result.aiAnalysis?.nextSearchSuggestions)}
+      <h3>Resultados web encontrados</h3>
+      ${renderWebResults(result.webResults)}
+      <h3>Fontes que exigem acao manual</h3>
+      ${renderManualSources(result.manualSources)}
       <h3>Links extraidos</h3>
       ${renderLinks(result.recordLinks)}
       <details>

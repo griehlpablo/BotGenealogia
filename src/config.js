@@ -52,6 +52,17 @@ module.exports = {
   familySearchMode: ['manual', 'browser'].includes((process.env.FAMILYSEARCH_MODE || '').toLowerCase())
     ? process.env.FAMILYSEARCH_MODE.toLowerCase()
     : 'manual',
+  webSearch: {
+    provider: (process.env.WEB_SEARCH_PROVIDER || 'duckduckgo').toLowerCase(),
+    limit: numberFromEnv('WEB_SEARCH_LIMIT', 10),
+    maxQueries: numberFromEnv('WEB_SEARCH_MAX_QUERIES', 30),
+    collectMaxPages: numberFromEnv('WEB_COLLECT_MAX_PAGES', 20),
+    queueMaxDepth: numberFromEnv('WEB_QUEUE_MAX_DEPTH', 1),
+    delayMinMs: numberFromEnv('WEB_SEARCH_DELAY_MIN_MS', 3000),
+    delayMaxMs: numberFromEnv('WEB_SEARCH_DELAY_MAX_MS', 9000),
+    collectDelayMinMs: numberFromEnv('WEB_COLLECT_DELAY_MIN_MS', 3000),
+    collectDelayMaxMs: numberFromEnv('WEB_COLLECT_DELAY_MAX_MS', 10000)
+  },
   credentials: {
     familysearch: {
       email: process.env.FAMILYSEARCH_EMAIL,
